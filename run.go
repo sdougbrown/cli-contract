@@ -15,7 +15,7 @@ import (
 // stderr. Invalid declarations panic at startup: a command without help
 // text would otherwise render blank instead of failing here.
 func Run(app *App, adapter Adapter, argv []string, stdout, stderr io.Writer) int {
-	if err := validate(app.Commands); err != nil {
+	if err := validate(app); err != nil {
 		panic(err.Error())
 	}
 	command := ""

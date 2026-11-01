@@ -110,25 +110,16 @@ func UsageErrorf(format string, args ...any) *UsageError {
 	return &UsageError{Message: fmt.Sprintf(format, args...)}
 }
 
-// validate checks one declaration set: every command has a short, and flag
-// kinds are known. Called by BuildTree so drift fails at startup.
-func validate(commands []*Command) error {
-	for _, cmd := range commands {
+// validate checks one declared App: every command and subcommand has a
+// short, flags are well-formed, and Handle/Raw are exclusive. Called by Run
+// so drift fails at startup.
+func validate(app *App) error {
+	if err := validateFlags(app.Name, app.CommonFlags); err != nil {
+		return err
+	}
+	for _, cmd := range app.Commands {
 		if cmd.Short == "" {
 			return UsageErrorf("command %q has no help short", cmd.Name)
-		}
-		for _, f := range cmd.Flags {
-			switch f.Kind {
-			case String, Bool, Repeat:
-			default:
-				return UsageErrorf("command %q flag %q has unknown kind %d", cmd.Name, f.Name, f.Kind)
-			}
-			if f.Usage == "" {
-				return UsageErrorf("command %q flag %q has no usage string", cmd.Name, f.Name)
-			}
-			if f.Name == "" {
-				return UsageErrorf("command %q has an unnamed flag", cmd.Name)
-			}
 		}
 		if len(cmd.Subcommands) == 0 {
 			// Only leaf commands run: a parent with subcommands fails with
@@ -137,6 +128,9 @@ func validate(commands []*Command) error {
 				return UsageErrorf("command %q must declare exactly one of Handle or Raw", cmd.Name)
 			}
 		}
+		if err := validateFlags(cmd.Name, cmd.Flags); err != nil {
+			return err
+		}
 		for _, sub := range cmd.Subcommands {
 			if sub.Short == "" {
 				return UsageErrorf("command %q subcommand %q has no help short", cmd.Name, sub.Name)
@@ -144,6 +138,27 @@ func validate(commands []*Command) error {
 			if (sub.Handle == nil) == (sub.Raw == nil) {
 				return UsageErrorf("command %q subcommand %q must declare exactly one of Handle or Raw", cmd.Name, sub.Name)
 			}
+			if err := validateFlags(cmd.Name+" "+sub.Name, sub.Flags); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
+// validateFlags checks one flag list: named, known kind, and a usage string.
+func validateFlags(command string, flags []Flag) error {
+	for _, f := range flags {
+		switch f.Kind {
+		case String, Bool, Repeat:
+		default:
+			return UsageErrorf("command %q flag %q has unknown kind %d", command, f.Name, f.Kind)
+		}
+		if f.Usage == "" {
+			return UsageErrorf("command %q flag %q has no usage string", command, f.Name)
+		}
+		if f.Name == "" {
+			return UsageErrorf("command %q has an unnamed flag", command)
 		}
 	}
 	return nil
@@ -155,15 +170,6 @@ func commandUse(cmd *Command) string {
 		return cmd.Name + " <URL>"
 	}
 	return cmd.Name
-}
-
-// flagNames reports whether the command declares a flag with the given name.
-func (cmd *Command) flagNames() map[string]bool {
-	names := make(map[string]bool, len(cmd.Flags))
-	for _, f := range cmd.Flags {
-		names[f.Name] = true
-	}
-	return names
 }
 
 // find resolves argv[0] against the declared commands. Nested names resolve
