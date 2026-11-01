@@ -345,3 +345,11 @@ func (a *App) buildSubTree(exec *execution, runHandlers bool, c *Command) *cobra
 	}
 	return parent
 }
+
+// Tree builds the cobra command tree without an adapter: for tests and
+// introspection that walk the registered surface. Dispatching from the
+// returned tree is not supported.
+func (a *App) Tree() *cobra.Command {
+	exec := &execution{app: a}
+	return a.buildTree(exec, false)
+}
