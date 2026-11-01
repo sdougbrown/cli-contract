@@ -58,6 +58,11 @@ type Adapter interface {
 	// BeforeHandler runs after parsing and before the handler: deprecation
 	// notices and other pre-flight diagnostics go here.
 	BeforeHandler(inv Invocation, stderr io.Writer)
+	// Validate reports caller errors that stop the command before it runs
+	// (for example a malformed duration on a flag the handler would
+	// otherwise parse leniently). A non-nil error routes through the
+	// dispatch error path.
+	Validate(inv Invocation) error
 }
 
 // TestSeams is an optional Adapter extension for test-only crash and signal
@@ -207,6 +212,9 @@ func dispatchRunE(exec *execution, runHandlers bool, c *Command, parent *Command
 		if !runHandlers {
 			return nil
 		}
+		if verr := exec.adapter.Validate(inv); verr != nil {
+			return verr
+		}
 		exec.adapter.BeforeHandler(inv, cmd.ErrOrStderr())
 		exec.invocation(cmd.Context(), c, inv)
 		return nil
@@ -329,7 +337,11 @@ func (a *App) buildSubTree(exec *execution, runHandlers bool, c *Command) *cobra
 		Short: c.Short,
 		Long:  c.Long,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return UsageErrorf("%s requires a subcommand", c.Name)
+			quoted := make([]string, len(c.Subcommands))
+			for i, sub := range c.Subcommands {
+				quoted[i] = fmt.Sprintf("%q", sub.Name)
+			}
+			return UsageErrorf("%s requires a subcommand: %s", c.Name, strings.Join(quoted, " or "))
 		},
 	}
 	for _, sub := range c.Subcommands {

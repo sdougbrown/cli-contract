@@ -70,6 +70,8 @@ func (a *testAdapter) ExitCode(inv Invocation, result any, handlerErr error) int
 	return 0
 }
 
+func (a *testAdapter) Validate(inv Invocation) error { return nil }
+
 func (a *testAdapter) Deadline(ctx context.Context, inv Invocation) (context.Context, context.CancelFunc) {
 	if a.deadline != nil {
 		return a.deadline(ctx, inv)
