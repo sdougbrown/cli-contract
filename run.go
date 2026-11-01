@@ -1,0 +1,127 @@
+package clicontract
+
+import (
+	"context"
+	"fmt"
+	"io"
+	"os"
+	"os/signal"
+	"syscall"
+)
+
+// Run executes one CLI invocation: it builds the tree from the declarations,
+// parses argv, runs the handler through the adapter, writes exactly one
+// result to stdout, and returns the process exit code. Diagnostics go to
+// stderr. Invalid declarations panic at startup: a command without help
+// text would otherwise render blank instead of failing here.
+func Run(app *App, adapter Adapter, argv []string, stdout, stderr io.Writer) int {
+	if err := validate(app.Commands); err != nil {
+		panic(err.Error())
+	}
+	command := ""
+	if len(argv) > 0 {
+		command = argv[0]
+	}
+
+	exec := &execution{app: app, adapter: adapter}
+	root := app.buildTree(exec, true)
+	root.SetOut(stdout)
+	root.SetErr(stderr)
+	root.SetArgs(argv)
+
+	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+	defer stop()
+	sigCh := make(chan os.Signal, 1)
+	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
+	defer signal.Stop(sigCh)
+
+	if err := root.ExecuteContext(ctx); err != nil {
+		// Help never reaches here (cobra writes plain help and returns
+		// nil); every error that does is a caller error with the usage
+		// envelope and exit 2.
+		err = asUsageError(err)
+		adapter.Write(stdout, adapter.ErrorResult(command, err))
+		fmt.Fprintln(stderr, err.Error())
+		return adapter.ExitCode(Invocation{Command: command}, nil, err)
+	}
+	// Help paths (bare --help, the help command, <command> --help) print
+	// plain text and exit 0 without a result; ran is set only when a
+	// command dispatched.
+	if !exec.ran {
+		return ExitOK
+	}
+	result := exec.result
+
+	// A terminating signal exits with its shell code and no stdout output.
+	select {
+	case sig := <-sigCh:
+		return SignalExitCode(sig)
+	default:
+	}
+
+	// Test-only crash point: after the result is computed, before the
+	// envelope is written. No-op without the TestSeams extension.
+	if seams, ok := adapter.(TestSeams); ok {
+		seams.BeforeWrite()
+	}
+	if seams, ok := adapter.(TestSeams); ok {
+		if sig, ok := seams.PendingSignal(); ok {
+			select {
+			case sigCh <- sig:
+			default:
+			}
+		}
+	}
+
+	// The result is the machine-readable record; this line keeps the
+	// stderr diagnostic promise for handler failures.
+	if exec.handlerErr != nil {
+		fmt.Fprintln(stderr, exec.handlerErr.Error())
+	}
+
+	if err := adapter.Write(stdout, result); err != nil {
+		fmt.Fprintln(stderr, err.Error())
+		return ExitOperational
+	}
+	if after, ok := adapter.(AfterWrite); ok {
+		after.AfterWrite(exec.inv, result, stderr)
+	}
+	// A signal that arrived during the write still wins on exit code, even
+	// though the envelope may already be written.
+	select {
+	case sig := <-sigCh:
+		return SignalExitCode(sig)
+	default:
+	}
+	return adapter.ExitCode(exec.inv, result, exec.handlerErr)
+}
+
+// Parse parses argv (without the program name) without running anything: it
+// executes the tree in parse-only mode, so flags and positionals are
+// validated by the same Args functions dispatch uses, and returns the
+// captured Invocation. Commands that produce no Invocation (help paths,
+// raw-output commands) return a caller error, matching Run's no-envelope
+// behavior for them.
+func Parse(app *App, argv []string) (Invocation, error) {
+	if len(argv) == 0 {
+		return Invocation{}, UsageErrorf("missing subcommand")
+	}
+	exec := &execution{app: app, adapter: nil}
+	root := app.buildTree(exec, false)
+	root.SetOut(io.Discard)
+	root.SetErr(io.Discard)
+	root.SetArgs(argv)
+	if err := root.Execute(); err != nil {
+		return Invocation{}, asUsageError(err)
+	}
+	if !exec.ran {
+		return Invocation{}, UsageErrorf("missing subcommand")
+	}
+	return exec.inv, nil
+}
+
+// Find resolves one command by name, including nested names ("parent sub").
+// It returns nil when no declared command matches.
+func (a *App) Find(name string) *Command {
+	return a.find(name)
+}
