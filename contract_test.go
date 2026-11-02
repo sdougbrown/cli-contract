@@ -848,3 +848,188 @@ func TestDeepNesting(t *testing.T) {
 		t.Errorf("unknown leaf: exit = %d, want 2", code)
 	}
 }
+
+// typedFlagApp declares Int, Duration, bool shorthands, String, a parent
+// persistent flag, and a NoInterspersed command: the kinds and modes the
+// single-dash normalization has to respect.
+func typedFlagApp() *App {
+	return &App{
+		Name:      "toolcli",
+		Version:   "vtest",
+		RootShort: "toolcli exercises typed flags",
+		Commands: []*Command{
+			{
+				Name:  "probe",
+				Short: "run one probe",
+				Positionals: []Positional{
+					{Name: "target", Required: true},
+					{Name: "extra", Variadic: true},
+				},
+				Flags: []Flag{
+					{Name: "retries", Kind: Int, Usage: "probe retries"},
+					{Name: "wait", Kind: Duration, Usage: "how long to wait"},
+					{Name: "verbose", Kind: Bool, Short: "v", Usage: "log verbosely"},
+					{Name: "brief", Kind: Bool, Short: "b", Usage: "log briefly"},
+					{Name: "label", Kind: String, Usage: "probe label"},
+				},
+				Handle: func(ctx context.Context, inv Invocation, _ io.Writer) (any, error) {
+					return map[string]any{
+						"retries": inv.Ints["retries"],
+						"wait":    inv.Durations["wait"].String(),
+						"verbose": inv.Bools["verbose"],
+						"brief":   inv.Bools["brief"],
+						"label":   inv.Flags["label"],
+						"args":    inv.Args,
+					}, nil
+				},
+			},
+			{
+				Name:  "remote",
+				Short: "remote utilities",
+				PersistentFlags: []Flag{
+					{Name: "region", Kind: String, Usage: "target region"},
+				},
+				Subcommands: []*Command{
+					{
+						Name:  "list",
+						Short: "list remotes",
+						Handle: func(ctx context.Context, inv Invocation, _ io.Writer) (any, error) {
+							return map[string]any{"region": inv.Flags["region"]}, nil
+						},
+					},
+				},
+			},
+			{
+				Name:           "scan",
+				Short:          "scan fixed arguments",
+				NoInterspersed: true,
+				Positionals:    []Positional{{Name: "args", Required: true, Variadic: true}},
+				Flags:          []Flag{{Name: "agent", Kind: String, Usage: "agent name"}},
+				Handle: func(ctx context.Context, inv Invocation, _ io.Writer) (any, error) {
+					return map[string]any{"args": inv.Args, "agent": inv.Flags["agent"]}, nil
+				},
+			},
+		},
+	}
+}
+
+func TestSingleDashLongFlags(t *testing.T) {
+	t.Run("string flag with separate and inline values", func(t *testing.T) {
+		inv, err := Parse(typedFlagApp(), []string{"probe", "-label", "x", "-label=y", "tgt"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if inv.Flags["label"] != "y" {
+			t.Errorf("label = %q, want y", inv.Flags["label"])
+		}
+	})
+
+	t.Run("bool flag", func(t *testing.T) {
+		inv, err := Parse(typedFlagApp(), []string{"probe", "-verbose", "tgt"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !inv.Bools["verbose"] {
+			t.Errorf("verbose = false, want true")
+		}
+	})
+
+	t.Run("int and duration kinds", func(t *testing.T) {
+		inv, err := Parse(typedFlagApp(), []string{"probe", "-retries", "3", "-wait=2s", "tgt"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if inv.Ints["retries"] != 3 || inv.Durations["wait"] != 2*time.Second {
+			t.Errorf("retries = %d, wait = %v, want 3 and 2s", inv.Ints["retries"], inv.Durations["wait"])
+		}
+	})
+
+	t.Run("persistent flag via single dash on a nested subcommand", func(t *testing.T) {
+		inv, err := Parse(typedFlagApp(), []string{"remote", "list", "-region", "eu"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if inv.Flags["region"] != "eu" {
+			t.Errorf("region = %q, want eu", inv.Flags["region"])
+		}
+	})
+
+	t.Run("shorthand cluster that is not a long name still parses as shorthands", func(t *testing.T) {
+		inv, err := Parse(typedFlagApp(), []string{"probe", "-vb", "tgt"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !inv.Bools["verbose"] || !inv.Bools["brief"] {
+			t.Errorf("verbose = %v, brief = %v, want both true", inv.Bools["verbose"], inv.Bools["brief"])
+		}
+	})
+
+	t.Run("a flag-looking value after a value-taking flag stays the value", func(t *testing.T) {
+		inv, err := Parse(typedFlagApp(), []string{"probe", "-label", "-verbose", "tgt"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if inv.Flags["label"] != "-verbose" {
+			t.Errorf("label = %q, want -verbose", inv.Flags["label"])
+		}
+		if inv.Bools["verbose"] {
+			t.Error("verbose = true, want false: the token was -label's value")
+		}
+	})
+
+	t.Run("tokens after a bare double dash are untouched", func(t *testing.T) {
+		inv, err := Parse(typedFlagApp(), []string{"probe", "tgt", "--", "-label"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(inv.Args) != 2 || inv.Args[1] != "-label" {
+			t.Errorf("args = %v, want [tgt -label]", inv.Args)
+		}
+		if inv.Flags["label"] != "" {
+			t.Errorf("label = %q, want empty: the token is positional", inv.Flags["label"])
+		}
+	})
+
+	t.Run("an undeclared single-dash token fails as a caller error", func(t *testing.T) {
+		_, err := Parse(typedFlagApp(), []string{"probe", "-bogus", "tgt"})
+		var ue *UsageError
+		if !errors.As(err, &ue) {
+			t.Fatalf("err = %v, want a UsageError", err)
+		}
+	})
+
+	t.Run("NoInterspersed keeps dashes after the first positional", func(t *testing.T) {
+		inv, err := Parse(typedFlagApp(), []string{"scan", "tgt", "-agent", "x"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(inv.Args) != 3 || inv.Args[1] != "-agent" || inv.Args[2] != "x" {
+			t.Errorf("args = %v, want [tgt -agent x]", inv.Args)
+		}
+		if inv.Flags["agent"] != "" {
+			t.Errorf("agent = %q, want empty: the token is positional", inv.Flags["agent"])
+		}
+	})
+}
+
+func TestSingleDashLongFlagsOnRun(t *testing.T) {
+	adapter := &testAdapter{}
+	code, stdout, stderr := runApp(t, typedFlagApp(), adapter, "probe", "-retries", "3", "-wait=2s", "-verbose", "tgt")
+	if code != 0 {
+		t.Fatalf("exit = %d, stderr: %s", code, stderr)
+	}
+	env := jsonField(t, stdout)
+	if env["retries"] != float64(3) || env["wait"] != "2s" || env["verbose"] != true {
+		t.Errorf("env = %v, want retries 3, wait 2s, verbose true", env)
+	}
+
+	// -help rewrites to the declared help flag: the plain-text help path
+	// exits 0 without an envelope.
+	code, stdout, _ = runApp(t, typedFlagApp(), &testAdapter{}, "probe", "-help")
+	if code != 0 {
+		t.Fatalf("exit = %d, want 0 for the -help help path", code)
+	}
+	if strings.HasPrefix(stdout, "{") {
+		t.Errorf("stdout = %q, want plain help text", stdout)
+	}
+}

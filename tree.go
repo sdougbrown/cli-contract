@@ -376,6 +376,10 @@ func (a *App) buildTree(exec *execution, runHandlers bool) *cobra.Command {
 		}
 		if c.NoInterspersed {
 			cmd.Flags().SetInterspersed(false)
+			if cmd.Annotations == nil {
+				cmd.Annotations = map[string]string{}
+			}
+			cmd.Annotations[noInterspersedAnnotation] = "true"
 		}
 		addFlags(cmd.Flags(), c.Flags)
 		root.AddCommand(cmd)
@@ -460,6 +464,97 @@ func commandNames(cmds []*Command) []string {
 		names[i] = c.Name
 	}
 	return names
+}
+
+// noInterspersedAnnotation marks a cobra command declared with
+// NoInterspersed: flag parsing stops at the first positional, so later
+// tokens are positionals even when they look like flags.
+const noInterspersedAnnotation = "clicontract-no-interspersed"
+
+// normalizeArgv rewrites single-dash long flags to their double-dash form
+// before cobra parses: pflag reads a token like -agent as the shorthand
+// cluster -a -g -e -n -t, so callers used to the standard flag package's
+// -agent, -agent=x and -agent x forms would fail. A token is rewritten
+// only when its name is longer than one character and is a declared long
+// flag of the command Find resolves — the command's own flags, inherited
+// persistent flags, and cobra's help and version flags. Everything else
+// passes through for pflag to handle: tokens after a bare --, value tokens
+// that follow a value-taking flag, undeclared names such as -bogus, and
+// shorthand clusters like -vf, which are never read as long names.
+func (a *App) normalizeArgv(root *cobra.Command, argv []string) []string {
+	out := make([]string, len(argv))
+	copy(out, argv)
+	cmd, _, err := root.Find(argv)
+	if err != nil || cmd == nil {
+		return out
+	}
+	// cobra declares the help and version flags lazily during execute;
+	// declaring them here lets -help and -version normalize the same way.
+	cmd.InitDefaultHelpFlag()
+	cmd.InitDefaultVersionFlag()
+	flags := cmd.Flags()
+
+	// valueNext marks that pflag reads the next token as the current
+	// flag's value, so that token is never rewritten.
+	valueNext := false
+	// stop mirrors non-interspersed parsing: from the first positional on,
+	// every token is a positional.
+	stop := false
+	for i, arg := range out {
+		if valueNext {
+			valueNext = false
+			continue
+		}
+		if stop {
+			continue
+		}
+		switch {
+		case arg == "--":
+			return out
+		case strings.HasPrefix(arg, "--"):
+			name, _, hasValue := strings.Cut(arg[2:], "=")
+			if f := flags.Lookup(name); f != nil && f.NoOptDefVal == "" && !hasValue {
+				valueNext = true
+			}
+		case strings.HasPrefix(arg, "-") && len(arg) > 1:
+			name, _, hasValue := strings.Cut(arg[1:], "=")
+			if f := flags.Lookup(name); f != nil && len(name) > 1 {
+				out[i] = "-" + arg // -name and -name=value become --name and --name=value
+				if !hasValue && f.NoOptDefVal == "" {
+					valueNext = true
+				}
+				continue
+			}
+			if !hasValue && shorthandTakesNext(flags, name) {
+				valueNext = true
+			}
+		default:
+			if cmd.Annotations[noInterspersedAnnotation] == "true" {
+				stop = true
+			}
+		}
+	}
+	return out
+}
+
+// shorthandTakesNext reports whether pflag reads the token following a
+// single-dash shorthand cluster as that cluster's value: true for a lone
+// value-taking shorthand, and for a cluster whose parsing reaches a final
+// value-taking shorthand; false once an unknown shorthand makes pflag
+// fail or a value-taking shorthand absorbs the rest of the cluster.
+func shorthandTakesNext(flags *pflag.FlagSet, cluster string) bool {
+	for len(cluster) > 0 {
+		f := flags.ShorthandLookup(cluster[:1])
+		if f == nil {
+			return false
+		}
+		if f.NoOptDefVal != "" {
+			cluster = cluster[1:] // bools keep parsing within the cluster
+			continue
+		}
+		return len(cluster) == 1 // a value-taking shorthand ends the cluster
+	}
+	return false
 }
 
 // Tree builds the cobra command tree without an adapter: for tests and

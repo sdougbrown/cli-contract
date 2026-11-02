@@ -64,6 +64,17 @@ The conventions the library owns:
 - Every dispatch-level failure (unknown command, bad flag, bad positional)
   arrives at the adapter as a `*UsageError` and is the app's to format.
 
+## Single-dash long flags
+
+`Run` and `Parse` accept single-dash long flags — `-agent`, `-agent=x`,
+`-agent x` — for any declared long flag of the resolved command, including
+inherited persistent flags. Tokens that are not declared long names pass
+through untouched: shorthand clusters like `-vf` still parse as shorthands,
+undeclared `-bogus` is still a caller error, a token that follows a
+value-taking flag is that flag's value, tokens after a bare `--` are never
+rewritten, and `NoInterspersed` commands keep everything after the first
+positional as positionals.
+
 ## Adapter
 
 ```go
