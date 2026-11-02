@@ -128,20 +128,20 @@ func testApp() *App {
 		RootLong:  "testcli observes things and delivers events.",
 		Commands: []*Command{
 			{
-				Name:  "reconcile",
-				Short: "collect feedback and establish the baseline",
-				URL:   true,
+				Name:        "reconcile",
+				Short:       "collect feedback and establish the baseline",
+				Positionals: []Positional{{Name: "URL", Required: true}},
 				Flags: []Flag{
 					{Name: "head", Kind: String, Usage: "expected head SHA"},
 				},
 				Handle: func(ctx context.Context, inv Invocation) (any, error) {
-					return map[string]any{"command": "reconcile", "status": "updated", "url": inv.URL, "head": inv.Flags["head"]}, nil
+					return map[string]any{"command": "reconcile", "status": "updated", "url": inv.Args[0], "head": inv.Flags["head"]}, nil
 				},
 			},
 			{
-				Name:  "wait",
-				Short: "block until new events arrive",
-				URL:   true,
+				Name:        "wait",
+				Short:       "block until new events arrive",
+				Positionals: []Positional{{Name: "URL", Required: true}},
 				Flags: []Flag{
 					{Name: "consumer", Kind: String, Usage: "name identifying this reader"},
 					{Name: "timeout", Kind: String, Usage: "maximum wait duration", Default: "30m"},
@@ -158,9 +158,9 @@ func testApp() *App {
 				},
 			},
 			{
-				Name:  "ack",
-				Short: "acknowledge delivered event IDs",
-				URL:   true,
+				Name:        "ack",
+				Short:       "acknowledge delivered event IDs",
+				Positionals: []Positional{{Name: "URL", Required: true}},
 				Flags: []Flag{
 					{Name: "event", Kind: Repeat, Usage: "event ID to acknowledge"},
 				},
@@ -413,7 +413,7 @@ func TestParse(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if inv.Command != "ack" || inv.URL != "u" || len(inv.Events) != 2 {
+		if inv.Command != "ack" || len(inv.Args) != 1 || inv.Args[0] != "u" || len(inv.Events) != 2 {
 			t.Fatalf("inv = %+v", inv)
 		}
 	})

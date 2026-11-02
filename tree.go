@@ -111,25 +111,16 @@ func addFlags(fs *pflag.FlagSet, flags []Flag) {
 	for _, f := range flags {
 		switch f.Kind {
 		case Bool:
-			fs.Bool(f.Name, false, f.Usage)
+			if f.Short != "" {
+				fs.BoolP(f.Name, f.Short, false, f.Usage)
+			} else {
+				fs.Bool(f.Name, false, f.Usage)
+			}
 		case Repeat:
 			fs.StringArray(f.Name, nil, f.Usage)
 		default:
 			fs.String(f.Name, "", f.Usage)
 		}
-	}
-}
-
-// exactlyOneURL validates the URL positionals for URL-taking commands.
-func exactlyOneURL(name string) cobra.PositionalArgs {
-	return func(cmd *cobra.Command, args []string) error {
-		switch {
-		case len(args) == 0:
-			return UsageErrorf("%s: missing <URL>", name)
-		case len(args) > 1:
-			return UsageErrorf("%s: unexpected argument %q", name, args[1])
-		}
-		return nil
 	}
 }
 
@@ -147,6 +138,7 @@ func noArgs(name string) cobra.PositionalArgs {
 func invocationFrom(cmd *cobra.Command, c *Command, parent *Command, args []string, common []Flag) (Invocation, error) {
 	inv := Invocation{
 		Sub:   c.Name,
+		Args:  args, // validated by positionalArgs
 		Flags: map[string]string{},
 		Bools: map[string]bool{},
 	}
@@ -155,9 +147,6 @@ func invocationFrom(cmd *cobra.Command, c *Command, parent *Command, args []stri
 	} else {
 		inv.Command = c.Name
 		inv.Sub = ""
-	}
-	if c.URL {
-		inv.URL = args[0] // validated by exactlyOneURL
 	}
 	fs := cmd.Flags()
 	read := func(f Flag) error {
@@ -277,7 +266,11 @@ func (a *App) buildTree(exec *execution, runHandlers bool) *cobra.Command {
 			return UsageErrorf("missing subcommand")
 		},
 	}
-	root.SetVersionTemplate(fmt.Sprintf("%s {{.Version}}\n", a.Name))
+	versionTemplate := a.VersionTemplate
+	if versionTemplate == "" {
+		versionTemplate = fmt.Sprintf("%s {{.Version}}\n", a.Name)
+	}
+	root.SetVersionTemplate(versionTemplate)
 	// Flag errors and unknown commands are caller errors: code them as
 	// usage errors so the envelope reports the usage classification.
 	root.SetFlagErrorFunc(func(cmd *cobra.Command, err error) error {
@@ -311,12 +304,7 @@ func (a *App) buildTree(exec *execution, runHandlers bool) *cobra.Command {
 		} else {
 			runE = dispatchRunE(exec, runHandlers, c, nil, a.CommonFlags)
 		}
-		var args cobra.PositionalArgs
-		if c.URL {
-			args = exactlyOneURL(c.Name)
-		} else {
-			args = noArgs(c.Name)
-		}
+		args := positionalArgs(c)
 		cmd := &cobra.Command{
 			Use:   commandUse(c),
 			Short: c.Short,

@@ -16,6 +16,8 @@ import (
 	"fmt"
 	"io"
 	"strings"
+
+	"github.com/spf13/cobra"
 )
 
 // Kind is the value kind of one flag.
@@ -41,6 +43,16 @@ type Flag struct {
 	// Default is the documented effective default the handlers apply when
 	// the flag is absent. Nil means the flag's zero value.
 	Default any
+	// Short is the optional single-letter shorthand (for example "f" for
+	// --follow). Empty means none.
+	Short string
+}
+
+// Positional declares one positional argument. Required positionals render
+// as <name> in help and must be present; optional ones render as [name].
+type Positional struct {
+	Name     string
+	Required bool
 }
 
 // Invocation carries one parsed command invocation.
@@ -49,7 +61,8 @@ type Invocation struct {
 	// Sub is the nested subcommand for commands that have one; empty
 	// otherwise.
 	Sub string
-	URL string
+	// Args holds the positional values in declaration order.
+	Args []string
 	// Flags holds single-valued flag values by name; absent flags are "".
 	Flags map[string]string
 	// Bools holds boolean flags by name; absent flags are false.
@@ -73,8 +86,8 @@ type Command struct {
 	Name  string
 	Short string
 	Long  string
-	// URL declares that the command takes exactly one URL positional.
-	URL bool
+	// Positionals are the command's positional arguments, in order.
+	Positionals []Positional
 	// Flags are the command-specific flags. Common flags are declared once
 	// on the App and registered persistently.
 	Flags []Flag
@@ -98,6 +111,9 @@ func (e *UsageError) Error() string { return e.Message }
 type App struct {
 	Name    string
 	Version string
+	// VersionTemplate renders the --version output; the default is
+	// "<name> {{.Version}}\n".
+	VersionTemplate string
 	// RootShort and RootLong are the bare help's short and long text.
 	RootShort   string
 	RootLong    string
@@ -164,12 +180,38 @@ func validateFlags(command string, flags []Flag) error {
 	return nil
 }
 
-// commandUse is the cobra Use string for one command.
+// commandUse is the cobra Use string for one command: the name plus the
+// positionals, required as <name> and optional as [name].
 func commandUse(cmd *Command) string {
-	if cmd.URL {
-		return cmd.Name + " <URL>"
+	use := cmd.Name
+	for _, p := range cmd.Positionals {
+		if p.Required {
+			use += " <" + p.Name + ">"
+		} else {
+			use += " [" + p.Name + "]"
+		}
 	}
-	return cmd.Name
+	return use
+}
+
+// positionalArgs validates the positional count against the declaration.
+func positionalArgs(cmd *Command) cobra.PositionalArgs {
+	required := 0
+	for _, p := range cmd.Positionals {
+		if p.Required {
+			required++
+		}
+	}
+	max := len(cmd.Positionals)
+	return func(c *cobra.Command, args []string) error {
+		switch {
+		case len(args) < required:
+			return UsageErrorf("%s: missing <%s>", cmd.Name, cmd.Positionals[len(args)].Name)
+		case len(args) > max:
+			return UsageErrorf("%s: unexpected argument %q", cmd.Name, args[max])
+		}
+		return nil
+	}
 }
 
 // find resolves argv[0] against the declared commands. Nested names resolve

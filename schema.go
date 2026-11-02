@@ -23,6 +23,12 @@ type CommandSchema struct {
 	Subcommands map[string]CommandSchema `json:"subcommands,omitempty"`
 }
 
+// hasURLPositional reports whether the command takes exactly one required
+// positional: the shape the envelope contract calls a URL target.
+func hasURLPositional(c *Command) bool {
+	return len(c.Positionals) == 1 && c.Positionals[0].Required
+}
+
 // KindSchema names the value kind the schema document renders.
 func (k Kind) KindSchema() string {
 	switch k {
@@ -70,7 +76,7 @@ func (c *Command) Schema() CommandSchema {
 	entry := CommandSchema{
 		Short: c.Short,
 		Use:   commandUse(c),
-		URL:   c.URL,
+		URL:   hasURLPositional(c),
 		Flags: flagsSchema(c.Flags),
 	}
 	if len(c.Subcommands) > 0 {
