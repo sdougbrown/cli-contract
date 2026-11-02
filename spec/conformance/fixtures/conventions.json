@@ -1,0 +1,258 @@
+{
+  "fixtureVersion": 1,
+  "id": "conventions",
+  "description": "Normative v1 conventions on one fixture CLI: help paths, version, dispatch failures, output modes, common and inherited flags, and environment passthrough.",
+  "declaration": {
+    "version": 1,
+    "name": "probecli",
+    "appVersion": "vtest",
+    "commonFlags": {
+      "format": { "kind": "string", "usage": "output format" }
+    },
+    "commands": {
+      "probe": {
+        "short": "run one probe",
+        "positionals": [
+          { "name": "target", "required": true },
+          { "name": "extra", "variadic": true }
+        ],
+        "flags": {
+          "retries": { "kind": "integer", "usage": "probe retries" },
+          "wait": { "kind": "duration", "usage": "how long to wait" },
+          "verbose": { "kind": "bool", "usage": "log verbosely", "short": "v" },
+          "brief": { "kind": "bool", "usage": "log briefly", "short": "b" },
+          "label": { "kind": "string", "usage": "probe label", "short": "l" }
+        }
+      },
+      "remote": {
+        "short": "remote utilities",
+        "flags": {
+          "region": { "kind": "string", "usage": "target region" }
+        },
+        "subcommands": {
+          "list": { "short": "list remotes" }
+        }
+      },
+      "scan": {
+        "short": "scan fixed arguments",
+        "noInterspersed": true,
+        "positionals": [
+          { "name": "args", "required": true, "variadic": true }
+        ],
+        "flags": {
+          "agent": { "kind": "string", "usage": "agent name" }
+        }
+      },
+      "env": {
+        "short": "print the marker environment value"
+      },
+      "echo": {
+        "short": "write one canned line",
+        "output": "raw-text"
+      },
+      "noop": {
+        "short": "write nothing",
+        "output": "none"
+      }
+    }
+  },
+  "cases": [
+    {
+      "id": "root-help-long",
+      "argv": ["--help"],
+      "expectedExitCode": 0,
+      "stdout": "plain-text",
+      "stderr": "empty"
+    },
+    {
+      "id": "root-help-short",
+      "argv": ["-h"],
+      "expectedExitCode": 0,
+      "stdout": "plain-text",
+      "stderr": "empty"
+    },
+    {
+      "id": "help-command",
+      "argv": ["help"],
+      "expectedExitCode": 0,
+      "stdout": "plain-text",
+      "stderr": "empty"
+    },
+    {
+      "id": "command-help-long",
+      "argv": ["probe", "--help"],
+      "expectedExitCode": 0,
+      "stdout": "plain-text",
+      "stderr": "empty"
+    },
+    {
+      "id": "command-help-short",
+      "argv": ["probe", "-h"],
+      "expectedExitCode": 0,
+      "stdout": "plain-text",
+      "stderr": "empty"
+    },
+    {
+      "id": "help-command-with-topic",
+      "argv": ["help", "probe"],
+      "expectedExitCode": 0,
+      "stdout": "plain-text",
+      "stderr": "empty"
+    },
+    {
+      "id": "help-command-with-nested-topic",
+      "argv": ["help", "remote", "list"],
+      "expectedExitCode": 0,
+      "stdout": "plain-text",
+      "stderr": "empty"
+    },
+    {
+      "id": "help-unknown-topic",
+      "argv": ["help", "bogus"],
+      "expectedExitCode": 2,
+      "stdout": "json-value",
+      "stderr": "non-empty"
+    },
+    {
+      "id": "version-long",
+      "argv": ["--version"],
+      "expectedExitCode": 0,
+      "stdout": "plain-text",
+      "stderr": "empty"
+    },
+    {
+      "id": "version-single-dash",
+      "argv": ["-version"],
+      "expectedExitCode": 0,
+      "stdout": "plain-text",
+      "stderr": "empty"
+    },
+    {
+      "id": "version-long-before-command",
+      "argv": ["--version", "probe"],
+      "expectedExitCode": 0,
+      "stdout": "plain-text",
+      "stderr": "empty"
+    },
+    {
+      "id": "version-single-dash-before-command",
+      "argv": ["-version", "probe"],
+      "expectedExitCode": 0,
+      "stdout": "plain-text",
+      "stderr": "empty"
+    },
+    {
+      "id": "unknown-command",
+      "argv": ["bogus"],
+      "expectedExitCode": 2,
+      "stdout": "json-value",
+      "stderr": "non-empty"
+    },
+    {
+      "id": "bare-invocation-without-bare-help",
+      "argv": [],
+      "expectedExitCode": 2,
+      "stdout": "json-value",
+      "stderr": "non-empty"
+    },
+    {
+      "id": "unknown-long-flag",
+      "argv": ["probe", "--bogus", "tgt"],
+      "expectedExitCode": 2,
+      "stdout": "json-value",
+      "stderr": "non-empty"
+    },
+    {
+      "id": "unknown-single-dash-token",
+      "argv": ["probe", "-bogus", "tgt"],
+      "expectedExitCode": 2,
+      "stdout": "json-value",
+      "stderr": "non-empty"
+    },
+    {
+      "id": "missing-required-positional",
+      "argv": ["probe"],
+      "expectedExitCode": 2,
+      "stdout": "json-value",
+      "stderr": "non-empty"
+    },
+    {
+      "id": "positional-excess-on-nested",
+      "argv": ["remote", "list", "extra"],
+      "expectedExitCode": 2,
+      "stdout": "json-value",
+      "stderr": "non-empty"
+    },
+    {
+      "id": "successful-dispatch",
+      "argv": ["probe", "tgt"],
+      "expectedExitCode": 0,
+      "stdout": "json-value",
+      "stdoutMatches": { "/command": "probe", "/status": "ok", "/args": ["tgt"] },
+      "stderr": "empty"
+    },
+    {
+      "id": "variadic-positionals-absorb",
+      "argv": ["probe", "a", "b", "c"],
+      "expectedExitCode": 0,
+      "stdout": "json-value",
+      "stdoutMatches": { "/args": ["a", "b", "c"] },
+      "stderr": "empty"
+    },
+    {
+      "id": "common-flag-before-command",
+      "argv": ["-format", "json", "probe", "tgt"],
+      "expectedExitCode": 0,
+      "stdout": "json-value",
+      "stdoutMatches": { "/format": "json" },
+      "stderr": "empty"
+    },
+    {
+      "id": "inherited-persistent-flag-before-nested-name",
+      "argv": ["remote", "-region", "eu", "list"],
+      "expectedExitCode": 0,
+      "stdout": "json-value",
+      "stdoutMatches": { "/region": "eu", "/command": "remote list" },
+      "stderr": "empty"
+    },
+    {
+      "id": "inherited-persistent-flag-after-nested-name",
+      "argv": ["remote", "list", "-region", "eu"],
+      "expectedExitCode": 0,
+      "stdout": "json-value",
+      "stdoutMatches": { "/region": "eu", "/command": "remote list" },
+      "stderr": "empty"
+    },
+    {
+      "id": "env-passthrough",
+      "argv": ["env"],
+      "env": { "FIXTURE_MARKER": "hello" },
+      "expectedExitCode": 0,
+      "stdout": "json-value",
+      "stdoutMatches": { "/marker": "hello" },
+      "stderr": "empty"
+    },
+    {
+      "id": "env-absent-by-default",
+      "argv": ["env"],
+      "expectedExitCode": 0,
+      "stdout": "json-value",
+      "stdoutMatches": { "/marker": "" },
+      "stderr": "empty"
+    },
+    {
+      "id": "raw-text-output",
+      "argv": ["echo", "tgt"],
+      "expectedExitCode": 0,
+      "stdout": "plain-text",
+      "stderr": "empty"
+    },
+    {
+      "id": "no-output",
+      "argv": ["noop"],
+      "expectedExitCode": 0,
+      "stdout": "empty",
+      "stderr": "empty"
+    }
+  ]
+}

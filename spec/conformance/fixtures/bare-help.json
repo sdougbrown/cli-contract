@@ -1,0 +1,36 @@
+{
+  "fixtureVersion": 1,
+  "id": "bare-help",
+  "description": "A declaration with bareHelp set: a bare invocation prints the root help and exits 0 instead of failing as a caller error.",
+  "declaration": {
+    "version": 1,
+    "name": "helpcli",
+    "appVersion": "vtest",
+    "behavior": {
+      "bareHelp": true
+    },
+    "commands": {
+      "probe": {
+        "short": "run one probe",
+        "positionals": [{ "name": "target", "required": true }]
+      }
+    }
+  },
+  "cases": [
+    {
+      "id": "bare-invocation-prints-help",
+      "argv": [],
+      "expectedExitCode": 0,
+      "stdout": "plain-text",
+      "stderr": "empty"
+    },
+    {
+      "id": "dispatch-still-works",
+      "argv": ["probe", "tgt"],
+      "expectedExitCode": 0,
+      "stdout": "json-value",
+      "stdoutMatches": { "/command": "probe", "/status": "ok" },
+      "stderr": "empty"
+    }
+  ]
+}

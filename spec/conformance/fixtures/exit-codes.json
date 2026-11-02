@@ -1,0 +1,41 @@
+{
+  "fixtureVersion": 1,
+  "id": "exit-codes",
+  "description": "The declared exit-code vocabulary: a handler returns a declared code (3) and it wins over the usage/operational split; the result still writes to stdout.",
+  "declaration": {
+    "version": 1,
+    "name": "owncli",
+    "appVersion": "vtest",
+    "behavior": {
+      "exitCodes": {
+        "3": "a conflict the handler detected"
+      }
+    },
+    "commands": {
+      "own": {
+        "short": "own one exit code",
+        "flags": {
+          "conflict": { "kind": "bool", "usage": "detect a conflict and exit 3" }
+        }
+      }
+    }
+  },
+  "cases": [
+    {
+      "id": "declared-code-wins",
+      "argv": ["own", "--conflict"],
+      "expectedExitCode": 3,
+      "stdout": "json-value",
+      "stdoutMatches": { "/command": "own", "/status": "ok" },
+      "stderr": "empty"
+    },
+    {
+      "id": "success-without-conflict",
+      "argv": ["own"],
+      "expectedExitCode": 0,
+      "stdout": "json-value",
+      "stdoutMatches": { "/command": "own", "/status": "ok" },
+      "stderr": "empty"
+    }
+  ]
+}

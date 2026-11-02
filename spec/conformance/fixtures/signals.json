@@ -1,0 +1,45 @@
+{
+  "fixtureVersion": 1,
+  "id": "signals",
+  "description": "Signal exits on a declaration that carries a long-running command: SIGINT exits 130 and SIGTERM exits 143, with no stdout result.",
+  "declaration": {
+    "version": 1,
+    "name": "sigcli",
+    "appVersion": "vtest",
+    "commands": {
+      "sleep": {
+        "short": "stay alive for a while",
+        "output": "none",
+        "flags": {
+          "seconds": {
+            "kind": "integer",
+            "usage": "how long to stay alive",
+            "default": 30
+          }
+        }
+      }
+    }
+  },
+  "cases": [
+    {
+      "id": "sigint-exits-130",
+      "argv": [
+        "sleep"
+      ],
+      "signal": "SIGINT",
+      "expectedExitCode": 130,
+      "stdout": "empty",
+      "stderr": "empty"
+    },
+    {
+      "id": "sigterm-exits-143",
+      "argv": [
+        "sleep"
+      ],
+      "signal": "SIGTERM",
+      "expectedExitCode": 143,
+      "stdout": "empty",
+      "stderr": "empty"
+    }
+  ]
+}

@@ -1,0 +1,139 @@
+{
+  "fixtureVersion": 1,
+  "id": "single-dash",
+  "description": "The single-dash long-flag rewrite rules and exceptions on the probecli declaration: bare, inline and separate values, shorthand clusters, value-taking shorthands, long-name precedence, bare --, and the NoInterspersed stop rule.",
+  "declaration": {
+    "version": 1,
+    "name": "probecli",
+    "appVersion": "vtest",
+    "commonFlags": {
+      "format": { "kind": "string", "usage": "output format" }
+    },
+    "commands": {
+      "probe": {
+        "short": "run one probe",
+        "positionals": [
+          { "name": "target", "required": true },
+          { "name": "extra", "variadic": true }
+        ],
+        "flags": {
+          "retries": { "kind": "integer", "usage": "probe retries" },
+          "wait": { "kind": "duration", "usage": "how long to wait" },
+          "verbose": { "kind": "bool", "usage": "log verbosely", "short": "v" },
+          "brief": { "kind": "bool", "usage": "log briefly", "short": "b" },
+          "label": { "kind": "string", "usage": "probe label", "short": "l" },
+          "vb": { "kind": "string", "usage": "versioned build id" }
+        }
+      },
+      "remote": {
+        "short": "remote utilities",
+        "flags": {
+          "region": { "kind": "string", "usage": "target region" }
+        },
+        "subcommands": {
+          "list": { "short": "list remotes" }
+        }
+      },
+      "scan": {
+        "short": "scan fixed arguments",
+        "noInterspersed": true,
+        "positionals": [
+          { "name": "args", "required": true, "variadic": true }
+        ],
+        "flags": {
+          "agent": { "kind": "string", "usage": "agent name" }
+        }
+      }
+    }
+  },
+  "cases": [
+    {
+      "id": "single-dash-bare-and-inline-values",
+      "argv": ["probe", "-label", "x", "-label=y", "tgt"],
+      "expectedExitCode": 0,
+      "stdout": "json-value",
+      "stdoutMatches": { "/label": "y", "/args": ["tgt"] },
+      "stderr": "empty"
+    },
+    {
+      "id": "single-dash-bool-flag",
+      "argv": ["probe", "-verbose", "tgt"],
+      "expectedExitCode": 0,
+      "stdout": "json-value",
+      "stdoutMatches": { "/verbose": true },
+      "stderr": "empty"
+    },
+    {
+      "id": "single-dash-integer-and-duration",
+      "argv": ["probe", "-retries", "3", "-wait=2s", "tgt"],
+      "expectedExitCode": 0,
+      "stdout": "json-value",
+      "stdoutMatches": { "/retries": 3, "/wait": "2s" },
+      "stderr": "empty"
+    },
+    {
+      "id": "value-taking-shorthand-absorbs-flag-looking-token",
+      "argv": ["probe", "-l", "-verbose", "tgt"],
+      "expectedExitCode": 0,
+      "stdout": "json-value",
+      "stdoutMatches": { "/label": "-verbose", "/verbose": false, "/args": ["tgt"] },
+      "stderr": "empty"
+    },
+    {
+      "id": "cluster-ending-in-value-taking-shorthand",
+      "argv": ["probe", "-vl", "name", "tgt"],
+      "expectedExitCode": 0,
+      "stdout": "json-value",
+      "stdoutMatches": { "/label": "name", "/verbose": true, "/args": ["tgt"] },
+      "stderr": "empty"
+    },
+    {
+      "id": "shorthand-cluster-not-a-long-name",
+      "argv": ["probe", "-bv", "tgt"],
+      "expectedExitCode": 0,
+      "stdout": "json-value",
+      "stdoutMatches": { "/verbose": true, "/brief": true, "/args": ["tgt"] },
+      "stderr": "empty"
+    },
+    {
+      "id": "long-name-beats-shorthand-cluster",
+      "argv": ["probe", "-vb", "x", "tgt"],
+      "expectedExitCode": 0,
+      "stdout": "json-value",
+      "stdoutMatches": { "/vb": "x", "/verbose": false, "/brief": false },
+      "stderr": "empty"
+    },
+    {
+      "id": "inherited-persistent-flag-single-dash",
+      "argv": ["remote", "list", "-region", "eu"],
+      "expectedExitCode": 0,
+      "stdout": "json-value",
+      "stdoutMatches": { "/region": "eu" },
+      "stderr": "empty"
+    },
+    {
+      "id": "tokens-after-bare-double-dash-untouched",
+      "argv": ["probe", "tgt", "--", "-label"],
+      "expectedExitCode": 0,
+      "stdout": "json-value",
+      "stdoutMatches": { "/args": ["tgt", "-label"], "/label": "" },
+      "stderr": "empty"
+    },
+    {
+      "id": "no-interspersed-rewrites-before-first-positional",
+      "argv": ["scan", "-agent", "x", "tgt"],
+      "expectedExitCode": 0,
+      "stdout": "json-value",
+      "stdoutMatches": { "/agent": "x", "/args": ["tgt"] },
+      "stderr": "empty"
+    },
+    {
+      "id": "no-interspersed-keeps-dashes-after-first-positional",
+      "argv": ["scan", "tgt", "-agent", "x"],
+      "expectedExitCode": 0,
+      "stdout": "json-value",
+      "stdoutMatches": { "/agent": "", "/args": ["tgt", "-agent", "x"] },
+      "stderr": "empty"
+    }
+  ]
+}

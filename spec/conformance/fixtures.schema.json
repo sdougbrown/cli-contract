@@ -1,0 +1,64 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://raw.githubusercontent.com/sdougbrown/cli-contract/main/spec/conformance/fixtures.schema.json",
+  "title": "cli-contract conformance fixture",
+  "description": "One conformance fixture: a declaration document plus the cases a conforming CLI must satisfy.",
+  "type": "object",
+  "required": ["fixtureVersion", "id", "declaration", "cases"],
+  "additionalProperties": false,
+  "properties": {
+    "fixtureVersion": { "const": 1 },
+    "id": { "type": "string", "minLength": 1 },
+    "description": { "type": "string" },
+    "declaration": {
+      "$ref": "../cli-contract.schema.json"
+    },
+    "cases": {
+      "type": "array",
+      "minItems": 1,
+      "items": { "$ref": "#/definitions/case" }
+    }
+  },
+  "definitions": {
+    "case": {
+      "type": "object",
+      "required": ["id", "argv", "expectedExitCode", "stdout", "stderr"],
+      "additionalProperties": false,
+      "properties": {
+        "id": { "type": "string", "minLength": 1 },
+        "argv": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "env": {
+          "type": "object",
+          "description": "Environment variables added or overridden for the case.",
+          "additionalProperties": { "type": "string" }
+        },
+        "signal": {
+          "enum": ["SIGINT", "SIGTERM"],
+          "description": "A terminating signal the runner sends once the process is alive."
+        },
+        "expectedExitCode": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 255
+        },
+        "stdout": {
+          "type": "string",
+          "pattern": "^(empty|plain-text|json-value|json-matches:(/(?:[^/~]|~0|~1)+))$",
+          "description": "The stdout class; json-matches carries an RFC 6901 pointer."
+        },
+        "stdoutMatches": {
+          "type": "object",
+          "description": "RFC 6901 pointers to expected JSON values, evaluated against the parsed stdout.",
+          "additionalProperties": true
+        },
+        "stderr": {
+          "type": "string",
+          "pattern": "^(empty|non-empty|prefix:.+)$"
+        }
+      }
+    }
+  }
+}

@@ -1,0 +1,30 @@
+{
+  "fixtureVersion": 1,
+  "fixtures": [
+    {
+      "id": "conventions",
+      "path": "fixtures/conventions.json",
+      "description": "Normative v1 conventions for help, version, dispatch failures, output modes, common and persistent flags, and env passthrough, on one fixture CLI."
+    },
+    {
+      "id": "single-dash",
+      "path": "fixtures/single-dash.json",
+      "description": "The single-dash long-flag rewrite rules and exceptions: bare, inline and separate values, shorthand clusters, value-taking shorthands, bare --, and NoInterspersed stop rules."
+    },
+    {
+      "id": "bare-help",
+      "path": "fixtures/bare-help.json",
+      "description": "A declaration with bareHelp set: a bare invocation prints the root help and exits 0."
+    },
+    {
+      "id": "exit-codes",
+      "path": "fixtures/exit-codes.json",
+      "description": "The declared exit-code vocabulary: a handler returns a declared code and it wins over the usage/operational split."
+    },
+    {
+      "id": "signals",
+      "path": "fixtures/signals.json",
+      "description": "Signal exits on a declaration that carries a long-running command: SIGINT exits 130 and SIGTERM exits 143 with no stdout result."
+    }
+  ]
+}
