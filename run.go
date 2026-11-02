@@ -18,16 +18,17 @@ func Run(app *App, adapter Adapter, argv []string, stdout, stderr io.Writer) int
 	if err := validate(app); err != nil {
 		panic(err.Error())
 	}
+	normalized := app.normalizeArgv(argv)
 	command := ""
-	if len(argv) > 0 {
-		command = argv[0]
+	if len(normalized) > 0 {
+		command = normalized[0]
 	}
 
 	exec := &execution{app: app, adapter: adapter}
 	root := app.buildTree(exec, true)
 	root.SetOut(stdout)
 	root.SetErr(stderr)
-	root.SetArgs(app.normalizeArgv(argv))
+	root.SetArgs(normalized)
 
 	ctx := context.Background()
 	sigCh := make(chan os.Signal, 1)
@@ -141,14 +142,15 @@ func Parse(app *App, argv []string) (Invocation, error) {
 	if err := validate(app); err != nil {
 		panic(err.Error())
 	}
-	if len(argv) == 0 {
-		return Invocation{}, UsageErrorf("missing subcommand")
-	}
 	exec := &execution{app: app, adapter: nil}
 	root := app.buildTree(exec, false)
 	root.SetOut(io.Discard)
 	root.SetErr(io.Discard)
-	root.SetArgs(app.normalizeArgv(argv))
+	normalized := app.normalizeArgv(argv)
+	if len(normalized) == 0 {
+		return Invocation{}, UsageErrorf("missing subcommand")
+	}
+	root.SetArgs(normalized)
 	if err := root.Execute(); err != nil {
 		return Invocation{}, asUsageError(err)
 	}

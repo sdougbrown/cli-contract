@@ -519,6 +519,12 @@ func (a *App) levelFlags(path []*Command) *levelFlags {
 		shorts: make(map[string]bool),
 	}
 	lf.add(a.CommonFlags)
+	// Persistent flags declared anywhere in the tree are rewrite-known at
+	// every level: a caller may type an inherited flag before the command
+	// names that resolve it (`-region eu remote list`), so the surface
+	// cannot wait for the descent. A token rewritten this way that the
+	// resolved command does not inherit still fails as a caller error.
+	a.addPersistentFlags(lf)
 	for _, c := range path {
 		lf.add(c.PersistentFlags)
 	}
@@ -540,6 +546,19 @@ func (a *App) levelFlags(path []*Command) *levelFlags {
 		}
 	}
 	return lf
+}
+
+// addPersistentFlags records every persistent flag declared anywhere in
+// the tree, so a token that names one rewrites before the walk descends.
+func (a *App) addPersistentFlags(lf *levelFlags) {
+	var walk func(cmds []*Command)
+	walk = func(cmds []*Command) {
+		for _, c := range cmds {
+			lf.add(c.PersistentFlags)
+			walk(c.Subcommands)
+		}
+	}
+	walk(a.Commands)
 }
 
 // subcommand returns the declared subcommand of the command at the end of

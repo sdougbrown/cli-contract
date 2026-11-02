@@ -869,10 +869,11 @@ func typedFlagApp() *App {
 					{Name: "extra", Variadic: true},
 				},
 				Flags: []Flag{
-					{Name: "retries", Kind: Int, Usage: "probe retries"},
-					{Name: "wait", Kind: Duration, Usage: "how long to wait"},
+					{Name: "retries", Kind: Int, Short: "r", Usage: "probe retries"},
+					{Name: "wait", Kind: Duration, Short: "w", Usage: "how long to wait"},
 					{Name: "verbose", Kind: Bool, Short: "v", Usage: "log verbosely"},
 					{Name: "brief", Kind: Bool, Short: "b", Usage: "log briefly"},
+					{Name: "tag", Kind: Repeat, Short: "t", Usage: "record tags"},
 					{Name: "label", Kind: String, Short: "l", Usage: "probe label"},
 				},
 				Handle: func(ctx context.Context, inv Invocation, _ io.Writer) (any, error) {
@@ -1001,6 +1002,29 @@ func TestSingleDashLongFlags(t *testing.T) {
 		}
 		if !inv.Bools["verbose"] || inv.Flags["label"] != "name" {
 			t.Errorf("verbose = %v, label = %q; want true and name", inv.Bools["verbose"], inv.Flags["label"])
+		}
+	})
+
+	t.Run("an inherited persistent flag before the command names", func(t *testing.T) {
+		inv, err := Parse(typedFlagApp(), []string{"-region", "eu", "remote", "list"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if inv.Flags["region"] != "eu" {
+			t.Errorf("region = %q, want eu: the flag is inherited by the resolved command", inv.Flags["region"])
+		}
+	})
+
+	t.Run("value-taking shorthands of every kind", func(t *testing.T) {
+		inv, err := Parse(typedFlagApp(), []string{"probe", "-r", "3", "-w=2s", "-t", "a", "-t=b", "tgt"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if inv.Ints["retries"] != 3 || inv.Durations["wait"] != 2*time.Second {
+			t.Errorf("retries = %d, wait = %v; want 3 and 2s", inv.Ints["retries"], inv.Durations["wait"])
+		}
+		if len(inv.Events) != 2 || inv.Events[0] != "a" || inv.Events[1] != "b" {
+			t.Errorf("events = %v, want [a b]", inv.Events)
 		}
 	})
 
@@ -1435,6 +1459,37 @@ func TestSuppliedFlags(t *testing.T) {
 	}
 	if inv.Flags["region"] != "eu" {
 		t.Errorf("region = %q, want eu", inv.Flags["region"])
+	}
+}
+
+// TestNilArgvIsConsistentAcrossEntryPoints pins that nil argv means the
+// process's own arguments on both entry points, and that a dispatch
+// error's envelope labels the resolved command.
+func TestNilArgvIsConsistentAcrossEntryPoints(t *testing.T) {
+	orig := os.Args
+	defer func() { os.Args = orig }()
+	os.Args = []string{"testcli", "reconcile", "u"}
+
+	inv, err := Parse(testApp(), nil)
+	if err != nil {
+		t.Fatalf("Parse(nil): %v", err)
+	}
+	if inv.Command != "reconcile" || len(inv.Args) != 1 || inv.Args[0] != "u" {
+		t.Errorf("Parse(nil) = %q %v, want the process's own arguments", inv.Command, inv.Args)
+	}
+
+	os.Args = []string{"testcli", "bogus"}
+	var stdout, stderr bytes.Buffer
+	code := Run(testApp(), &testAdapter{}, nil, &stdout, &stderr)
+	if code != 2 {
+		t.Fatalf("Run(nil) over an unknown command: exit = %d, want 2", code)
+	}
+	var env map[string]any
+	if err := json.Unmarshal(stdout.Bytes(), &env); err != nil {
+		t.Fatalf("stdout is not one JSON value: %v (%q)", err, stdout.String())
+	}
+	if env["command"] != "bogus" {
+		t.Errorf("envelope command = %v, want bogus: the resolved command, not an empty label", env["command"])
 	}
 }
 
