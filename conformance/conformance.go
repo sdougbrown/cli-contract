@@ -101,43 +101,10 @@ type Failure struct {
 	Details string
 }
 
-// CheckFixture runs every case of the fixture and returns the failures.
-func CheckFixture(f *Fixture) []Failure {
-	app, adapter := BuildApp(f.Declaration)
-	var failures []Failure
-	for _, c := range f.Cases {
-		obs := runCase(app, adapter, c)
-		if details := compare(c, obs); details != "" {
-			failures = append(failures, Failure{Case: c.ID, Details: details})
-		}
-	}
-	return failures
-}
-
-// runCase runs one case against the built app with fresh buffers.
-func runCase(app *clicontract.App, adapter *Adapter, c Case) Outcome {
-	for _, k := range envKeys(c.Env) {
-		os.Setenv(k, c.Env[k])
-		defer os.Unsetenv(k)
-	}
-	adapter.signal = c.Signal
-	var stdout, stderr bytes.Buffer
-	code := clicontract.Run(app, adapter, c.Argv, &stdout, &stderr)
-	return Outcome{ExitCode: code, Stdout: stdout.String(), Stderr: stderr.String()}
-}
-
-func envKeys(env map[string]string) []string {
-	keys := make([]string, 0, len(env))
-	for k := range env {
-		keys = append(keys, k)
-	}
-	sort.Strings(keys)
-	return keys
-}
-
-// compare returns "" when the outcome satisfies the case, else the
-// disagreements.
-func compare(c Case, obs Outcome) string {
+// Check compares one observed outcome against the case and returns the
+// disagreements (empty when the case holds). It is shared by the fixture
+// runner and the black-box checker.
+func Check(c Case, obs Outcome) []string {
 	var problems []string
 	if obs.ExitCode != c.ExpectedExitCode {
 		problems = append(problems, fmt.Sprintf("exit code = %d, want %d", obs.ExitCode, c.ExpectedExitCode))
@@ -170,7 +137,41 @@ func compare(c Case, obs Outcome) string {
 			}
 		}
 	}
-	return strings.Join(problems, "; ")
+	return problems
+}
+
+// CheckFixture runs every case of the fixture and returns the failures.
+func CheckFixture(f *Fixture) []Failure {
+	app, adapter := BuildApp(f.Declaration)
+	var failures []Failure
+	for _, c := range f.Cases {
+		obs := runCase(app, adapter, c)
+		if problems := Check(c, obs); problems != nil {
+			failures = append(failures, Failure{Case: c.ID, Details: strings.Join(problems, "; ")})
+		}
+	}
+	return failures
+}
+
+// runCase runs one case against the built app with fresh buffers.
+func runCase(app *clicontract.App, adapter *Adapter, c Case) Outcome {
+	for _, k := range envKeys(c.Env) {
+		os.Setenv(k, c.Env[k])
+		defer os.Unsetenv(k)
+	}
+	adapter.signal = c.Signal
+	var stdout, stderr bytes.Buffer
+	code := clicontract.Run(app, adapter, c.Argv, &stdout, &stderr)
+	return Outcome{ExitCode: code, Stdout: stdout.String(), Stderr: stderr.String()}
+}
+
+func envKeys(env map[string]string) []string {
+	keys := make([]string, 0, len(env))
+	for k := range env {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	return keys
 }
 
 // matchClass checks one stream against its class.

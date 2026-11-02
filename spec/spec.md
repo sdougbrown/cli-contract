@@ -62,12 +62,12 @@ A conforming CLI MUST follow every rule in this section.
 
 - An unknown command, an unknown or malformed flag, a missing required
   positional or positional excess, and an unknown `help` topic are caller
-  errors. A caller error MUST exit 2, MUST write nothing to stdout, and
-  MUST write a diagnostic to stderr.
-- Envelope-style apps (output mode `json-value`) additionally write one
-  usage-classified error envelope to stdout before the exit; the stdout
-  class for such cases is `json-value`. The exit code and the empty
-  stderr guarantee beyond the diagnostic do not change.
+  errors. A caller error MUST exit 2 and MUST write a diagnostic to
+  stderr.
+- On stdout, a caller error writes nothing beyond the app's error
+  envelope: an envelope-style app (output mode `json-value`) writes
+  exactly one usage-classified error envelope (stdout class
+  `json-value`); a non-envelope app writes nothing.
 - Exit code 2 is reserved for caller errors. Exit code 1 is reserved for
   operational failures. Exit code 0 means success.
 
@@ -169,9 +169,10 @@ the target does not declare one.
 ## 6. The black-box checker
 
 `cli-contract check <binary>` asks the target for its declaration
-document, derives cases from the declared surface — help on every
-command, an unknown flag on every command, a missing required positional,
-`--version` — and runs them, reporting every violation of section 2. It
-works on CLIs that do not embed the library. Exit-code vocabulary checks
-(3.2) run against the declared codes; signal cases run only when the
-target declares a long-running command (5).
+document — the target exposes it through a `schema` command that writes
+the document to stdout — derives cases from the declared surface: help on
+every command, an unknown flag on every command, a missing required
+positional, `--version` — and runs them, reporting every violation of
+section 2. It works on CLIs that do not embed the library. Exit-code
+vocabulary checks (3.2) run against the declared codes; signal cases run
+only when the target declares a long-running command (5).
