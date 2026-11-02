@@ -205,7 +205,7 @@ func dispatchRunE(exec *execution, runHandlers bool, c *Command, parent *Command
 			return verr
 		}
 		exec.adapter.BeforeHandler(inv, cmd.ErrOrStderr())
-		exec.invocation(cmd.Context(), c, inv)
+		exec.invocation(cmd.Context(), c, inv, cmd.ErrOrStderr())
 		return nil
 	}
 }
@@ -230,11 +230,11 @@ func rawRunE(exec *execution, runHandlers bool, c *Command, common []Flag) func(
 
 // invocation runs one command's handler with the decorated context and
 // normalizes handler failures through the adapter's error result.
-func (exec *execution) invocation(ctx context.Context, c *Command, inv Invocation) {
+func (exec *execution) invocation(ctx context.Context, c *Command, inv Invocation, stderr io.Writer) {
 	var cancel context.CancelFunc
 	ctx, cancel = exec.adapter.Deadline(ctx, inv)
 	defer cancel()
-	result, err := c.Handle(ctx, inv)
+	result, err := c.Handle(ctx, inv, stderr)
 	if err != nil {
 		exec.result = exec.adapter.ErrorResult(inv.Command, err)
 		exec.handlerErr = err
@@ -263,6 +263,9 @@ func (a *App) buildTree(exec *execution, runHandlers bool) *cobra.Command {
 		// surface; the hidden __complete protocol stays available.
 		CompletionOptions: cobra.CompletionOptions{DisableDefaultCmd: true},
 		RunE: func(cmd *cobra.Command, args []string) error {
+			if a.BareHelp {
+				return cmd.Help()
+			}
 			return UsageErrorf("missing subcommand")
 		},
 	}
@@ -274,7 +277,7 @@ func (a *App) buildTree(exec *execution, runHandlers bool) *cobra.Command {
 	// Flag errors and unknown commands are caller errors: code them as
 	// usage errors so the envelope reports the usage classification.
 	root.SetFlagErrorFunc(func(cmd *cobra.Command, err error) error {
-		return &UsageError{Message: fmt.Sprintf("%s: %v", cmd.Name(), err)}
+		return a.errf(a.pathOf(root, cmd), "%v", err)
 	})
 	// The default help command reports unknown topics on stdout and exits
 	// 0, breaching the one-JSON-envelope contract; this replacement routes
@@ -304,7 +307,7 @@ func (a *App) buildTree(exec *execution, runHandlers bool) *cobra.Command {
 		} else {
 			runE = dispatchRunE(exec, runHandlers, c, nil, a.CommonFlags)
 		}
-		args := positionalArgs(c)
+		args := a.positionalArgs(c.Name, c)
 		cmd := &cobra.Command{
 			Use:   commandUse(c),
 			Short: c.Short,
@@ -312,10 +315,26 @@ func (a *App) buildTree(exec *execution, runHandlers bool) *cobra.Command {
 			Args:  args,
 			RunE:  runE,
 		}
+		if c.NoInterspersed {
+			cmd.Flags().SetInterspersed(false)
+		}
 		addFlags(cmd.Flags(), c.Flags)
 		root.AddCommand(cmd)
 	}
 	return root
+}
+
+// pathOf derives the full command path for diagnostics: the app name at
+// the root, parent names joined with spaces below it.
+func (a *App) pathOf(root *cobra.Command, c *cobra.Command) string {
+	if c == root {
+		return a.Name
+	}
+	name := c.Name()
+	for p := c.Parent(); p != nil && p != root; p = p.Parent() {
+		name = p.Name() + " " + name
+	}
+	return name
 }
 
 // buildSubTree builds a command that owns nested subcommands.

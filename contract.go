@@ -49,10 +49,12 @@ type Flag struct {
 }
 
 // Positional declares one positional argument. Required positionals render
-// as <name> in help and must be present; optional ones render as [name].
+// as <name> in help and must be present; optional ones render as [name]. A
+// variadic positional (the last one) absorbs any remaining arguments.
 type Positional struct {
 	Name     string
 	Required bool
+	Variadic bool
 }
 
 // Invocation carries one parsed command invocation.
@@ -72,8 +74,9 @@ type Invocation struct {
 }
 
 // HandleFunc runs one parsed command invocation. The returned result is
-// app-defined; the adapter writes it and derives the exit code.
-type HandleFunc func(ctx context.Context, inv Invocation) (any, error)
+// app-defined; the adapter writes it and derives the exit code. Stderr is
+// the diagnostics writer for handler progress.
+type HandleFunc func(ctx context.Context, inv Invocation, stderr io.Writer) (any, error)
 
 // RawFunc writes directly to stdout instead of returning a result: the
 // command's output is not an envelope (help text, a schema document). A raw
@@ -88,6 +91,10 @@ type Command struct {
 	Long  string
 	// Positionals are the command's positional arguments, in order.
 	Positionals []Positional
+	// NoInterspersed stops flag parsing at the first positional, so dashed
+	// values meant for the command pass through instead of parsing as
+	// flags. The default (false) allows flags anywhere.
+	NoInterspersed bool
 	// Flags are the command-specific flags. Common flags are declared once
 	// on the App and registered persistently.
 	Flags []Flag
@@ -111,6 +118,12 @@ func (e *UsageError) Error() string { return e.Message }
 type App struct {
 	Name    string
 	Version string
+	// ErrorPrefix is the optional prefix on dispatch-error diagnostics:
+	// "mycli plan: unknown flag". Empty means the command path alone.
+	ErrorPrefix string
+	// BareHelp makes a bare invocation print help and exit 0 instead of
+	// failing with a missing-subcommand caller error.
+	BareHelp bool
 	// VersionTemplate renders the --version output; the default is
 	// "<name> {{.Version}}\n".
 	VersionTemplate string
@@ -181,34 +194,58 @@ func validateFlags(command string, flags []Flag) error {
 }
 
 // commandUse is the cobra Use string for one command: the name plus the
-// positionals, required as <name> and optional as [name].
+// positionals, required as <name>, optional as [name], variadic as
+// <name>... or [name...].
 func commandUse(cmd *Command) string {
 	use := cmd.Name
 	for _, p := range cmd.Positionals {
-		if p.Required {
+		switch {
+		case p.Required && p.Variadic:
+			use += " <" + p.Name + ">..."
+		case p.Required:
 			use += " <" + p.Name + ">"
-		} else {
+		case p.Variadic:
+			use += " [" + p.Name + "...]"
+		default:
 			use += " [" + p.Name + "]"
 		}
 	}
 	return use
 }
 
+// errf formats a caller error under the app's error prefix and command
+// path: "mycli plan: unexpected argument". The bare path is used when no
+// prefix is declared.
+func (a *App) errf(path, format string, args ...any) error {
+	msg := fmt.Sprintf(format, args...)
+	if a.ErrorPrefix == "" {
+		return UsageErrorf("%s: %s", path, msg)
+	}
+	if path == a.Name {
+		return UsageErrorf("%s: %s", a.ErrorPrefix, msg)
+	}
+	return UsageErrorf("%s %s: %s", a.ErrorPrefix, path, msg)
+}
+
 // positionalArgs validates the positional count against the declaration.
-func positionalArgs(cmd *Command) cobra.PositionalArgs {
+func (a *App) positionalArgs(path string, cmd *Command) cobra.PositionalArgs {
 	required := 0
-	for _, p := range cmd.Positionals {
+	variadic := false
+	for i, p := range cmd.Positionals {
 		if p.Required {
-			required++
+			required = i + 1
+		}
+		if p.Variadic {
+			variadic = true
 		}
 	}
-	max := len(cmd.Positionals)
 	return func(c *cobra.Command, args []string) error {
 		switch {
 		case len(args) < required:
-			return UsageErrorf("%s: missing <%s>", cmd.Name, cmd.Positionals[len(args)].Name)
-		case len(args) > max:
-			return UsageErrorf("%s: unexpected argument %q", cmd.Name, args[max])
+			missing := cmd.Positionals[len(args)].Name
+			return a.errf(path, "missing <%s>", missing)
+		case !variadic && len(args) > len(cmd.Positionals):
+			return a.errf(path, "unexpected argument %q", args[len(cmd.Positionals)])
 		}
 		return nil
 	}

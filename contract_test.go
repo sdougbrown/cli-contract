@@ -134,7 +134,7 @@ func testApp() *App {
 				Flags: []Flag{
 					{Name: "head", Kind: String, Usage: "expected head SHA"},
 				},
-				Handle: func(ctx context.Context, inv Invocation) (any, error) {
+				Handle: func(ctx context.Context, inv Invocation, _ io.Writer) (any, error) {
 					return map[string]any{"command": "reconcile", "status": "updated", "url": inv.Args[0], "head": inv.Flags["head"]}, nil
 				},
 			},
@@ -147,7 +147,7 @@ func testApp() *App {
 					{Name: "timeout", Kind: String, Usage: "maximum wait duration", Default: "30m"},
 					{Name: "exit-on-events", Kind: Bool, Usage: "exit 3 on events"},
 				},
-				Handle: func(ctx context.Context, inv Invocation) (any, error) {
+				Handle: func(ctx context.Context, inv Invocation, _ io.Writer) (any, error) {
 					if inv.Flags["consumer"] == "" {
 						return nil, UsageErrorf("wait requires --consumer")
 					}
@@ -164,7 +164,7 @@ func testApp() *App {
 				Flags: []Flag{
 					{Name: "event", Kind: Repeat, Usage: "event ID to acknowledge"},
 				},
-				Handle: func(ctx context.Context, inv Invocation) (any, error) {
+				Handle: func(ctx context.Context, inv Invocation, _ io.Writer) (any, error) {
 					return map[string]any{"command": "ack", "status": "ok", "events": inv.Events}, nil
 				},
 			},
@@ -175,7 +175,7 @@ func testApp() *App {
 					{
 						Name:  "path",
 						Short: "print the resolved store directory",
-						Handle: func(ctx context.Context, inv Invocation) (any, error) {
+						Handle: func(ctx context.Context, inv Invocation, _ io.Writer) (any, error) {
 							return map[string]any{"command": "store", "status": "ok"}, nil
 						},
 					},
@@ -183,7 +183,7 @@ func testApp() *App {
 						Name:  "reset",
 						Short: "delete the store",
 						Flags: []Flag{{Name: "target", Kind: String, Usage: "scope the reset to one target URL"}},
-						Handle: func(ctx context.Context, inv Invocation) (any, error) {
+						Handle: func(ctx context.Context, inv Invocation, _ io.Writer) (any, error) {
 							return map[string]any{"command": "store", "status": "ok", "sub": inv.Sub}, nil
 						},
 					},
@@ -376,7 +376,7 @@ func TestRunVersionFlag(t *testing.T) {
 
 func TestRunSignals(t *testing.T) {
 	app := testApp()
-	app.Commands[0].Handle = func(ctx context.Context, inv Invocation) (any, error) {
+	app.Commands[0].Handle = func(ctx context.Context, inv Invocation, _ io.Writer) (any, error) {
 		return map[string]any{"command": "reconcile", "status": "updated"}, nil
 	}
 	for _, tc := range []struct {
@@ -488,7 +488,7 @@ func TestSchemaDerivation(t *testing.T) {
 
 func TestValidatePanicsOnDrift(t *testing.T) {
 	app := testApp()
-	app.Commands = append(app.Commands, &Command{Name: "bogus", Handle: func(ctx context.Context, inv Invocation) (any, error) {
+	app.Commands = append(app.Commands, &Command{Name: "bogus", Handle: func(ctx context.Context, inv Invocation, _ io.Writer) (any, error) {
 		return nil, nil
 	}})
 	defer func() {
