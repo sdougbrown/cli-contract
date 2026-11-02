@@ -25,7 +25,7 @@ app := &clicontract.App{
             Flags: []clicontract.Flag{
                 {Name: "depth", Kind: clicontract.String, Usage: "fetch depth (default 3)", Default: "3"},
             },
-            Handle: func(ctx context.Context, inv clicontract.Invocation) (any, error) {
+            Handle: func(ctx context.Context, inv clicontract.Invocation, stderr io.Writer) (any, error) {
                 return map[string]any{"status": "ok"}, nil
             },
         },
@@ -78,6 +78,16 @@ flag is read as that flag, even when its letters are also bool shorthands:
 with `-v` and `-b` declared plus a long `vb`, `-vb x` sets `vb` to `x` — the
 long name wins. Positionals that may start with `-` belong after `--`, as
 they already did for `--name`.
+
+A value-taking shorthand works like its long form: a lone `-l` (a String
+flag's shorthand) and a cluster ending in one, like `-vl`, take the next
+token as their value, and a flag-looking token after them stays the value.
+
+`Invocation.Supplied` records the flags given on the command line, every
+kind included, with inherited persistent flags landing on the leaf's
+Invocation. A defaulted flag that was not typed keeps its default value
+and stays out of the map, so an explicitly-passed zero is distinguishable
+from absent.
 
 ## Adapter
 
