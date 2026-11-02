@@ -185,7 +185,10 @@ func schemaKind(k clicontract.Kind) string {
 		return "boolean"
 	case clicontract.Repeat:
 		return "array"
+	case clicontract.Int:
+		return "integer"
 	default:
+		// Duration flags bind as their Go duration string.
 		return "string"
 	}
 }

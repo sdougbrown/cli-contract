@@ -540,3 +540,111 @@ func (a *afterWriteAdapter) AfterWrite(inv Invocation, result any, stderr io.Wri
 	env := result.(map[string]any)
 	stderr.Write([]byte("status=" + env["status"].(string) + "\n"))
 }
+
+func TestIntAndDurationFlags(t *testing.T) {
+	app := &App{
+		Name:    "t",
+		Version: "v1",
+		Commands: []*Command{
+			{
+				Name:  "job",
+				Short: "run a job",
+				Flags: []Flag{
+					{Name: "retries", Kind: Int, Usage: "retry attempts"},
+					{Name: "wait", Kind: Duration, Usage: "how long to wait"},
+				},
+				Handle: func(ctx context.Context, inv Invocation, stderr io.Writer) (any, error) {
+					return map[string]any{
+						"retries": inv.Ints["retries"],
+						"wait":    inv.Durations["wait"].String(),
+					}, nil
+				},
+			},
+		},
+	}
+
+	code, stdout, stderr := runApp(t, app, &testAdapter{}, "job", "--retries=3", "--wait=90s")
+	if code != 0 {
+		t.Fatalf("exit = %d, stderr: %s", code, stderr)
+	}
+	env := jsonField(t, stdout)
+	if env["retries"] != float64(3) || env["wait"] != "1m30s" {
+		t.Errorf("env = %v, want retries 3 and wait 1m30s", env)
+	}
+
+	// Defaults are zero when absent.
+	code, stdout, _ = runApp(t, app, &testAdapter{}, "job")
+	if code != 0 {
+		t.Fatalf("exit = %d", code)
+	}
+	env = jsonField(t, stdout)
+	if env["retries"] != float64(0) || env["wait"] != "0s" {
+		t.Errorf("env = %v, want zero values", env)
+	}
+
+	// A bad duration is a caller error.
+	if code, _, _ := runApp(t, app, &testAdapter{}, "job", "--wait=nope"); code != 2 {
+		t.Errorf("exit = %d, want 2 for a bad duration", code)
+	}
+}
+
+func TestPersistentFlags(t *testing.T) {
+	app := &App{
+		Name:    "t",
+		Version: "v1",
+		Commands: []*Command{
+			{
+				Name:  "wf",
+				Short: "workflow parent",
+				PersistentFlags: []Flag{
+					{Name: "socket", Kind: String, Usage: "control socket path"},
+				},
+				Subcommands: []*Command{
+					{
+						Name:  "create",
+						Short: "create a workflow",
+						Handle: func(ctx context.Context, inv Invocation, stderr io.Writer) (any, error) {
+							return map[string]any{"socket": inv.Flags["socket"]}, nil
+						},
+					},
+				},
+			},
+		},
+	}
+	// The flag parses before the subcommand name.
+	code, stdout, stderr := runApp(t, app, &testAdapter{}, "wf", "--socket", "/tmp/s", "create")
+	if code != 0 {
+		t.Fatalf("exit = %d, stderr: %s", code, stderr)
+	}
+	if got := jsonField(t, stdout)["socket"]; got != "/tmp/s" {
+		t.Errorf("socket = %v", got)
+	}
+	// And after it, through normal flag parsing.
+	code, stdout, _ = runApp(t, app, &testAdapter{}, "wf", "create", "--socket", "/tmp/s")
+	if code != 0 {
+		t.Fatalf("exit = %d", code)
+	}
+	if got := jsonField(t, stdout)["socket"]; got != "/tmp/s" {
+		t.Errorf("socket = %v", got)
+	}
+
+	// The schema document renders persistent flags on the parent command.
+	doc := app.Schemas()
+	wf := doc["wf"]
+	if len(wf.Flags) != 1 {
+		t.Errorf("schema wf flags = %+v, want the persistent flag", wf.Flags)
+	}
+	if _, ok := wf.Flags["socket"]; !ok {
+		t.Errorf("schema wf flags missing socket: %+v", wf.Flags)
+	}
+}
+
+// jsonField decodes one JSON object from stdout.
+func jsonField(t *testing.T, data string) map[string]any {
+	t.Helper()
+	var m map[string]any
+	if err := json.Unmarshal([]byte(data), &m); err != nil {
+		t.Fatalf("stdout is not one JSON value: %v (%q)", err, data)
+	}
+	return m
+}

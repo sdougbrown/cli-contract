@@ -38,6 +38,10 @@ func (k Kind) KindSchema() string {
 		return "bool"
 	case Repeat:
 		return "repeat"
+	case Int:
+		return "integer"
+	case Duration:
+		return "duration"
 	default:
 		return "string"
 	}
@@ -84,6 +88,11 @@ func (c *Command) Schema() CommandSchema {
 	if len(c.Subcommands) > 0 {
 		entry.URL = false
 		entry.Flags = nil
+		if len(c.PersistentFlags) > 0 {
+			// Subcommands inherit these; the parent's entry is where
+			// consumers look for them.
+			entry.Flags = flagsSchema(c.PersistentFlags)
+		}
 		entry.Subcommands = make(map[string]CommandSchema, len(c.Subcommands))
 		for _, sub := range c.Subcommands {
 			entry.Subcommands[sub.Name] = sub.Schema()

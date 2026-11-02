@@ -16,6 +16,7 @@ import (
 	"fmt"
 	"io"
 	"strings"
+	"time"
 
 	"github.com/spf13/cobra"
 )
@@ -30,6 +31,10 @@ const (
 	Bool
 	// Repeat collects repeated values under one flag.
 	Repeat
+	// Int is an integer-valued flag.
+	Int
+	// Duration is a time.Duration flag parsed from a Go duration string.
+	Duration
 )
 
 // Flag declares one flag of one command. Usage is rendered in help and in
@@ -74,6 +79,10 @@ type Invocation struct {
 	Bools map[string]bool
 	// Events holds repeated flag values (kind Repeat).
 	Events []string
+	// Ints holds integer flag values by name; absent flags are 0.
+	Ints map[string]int
+	// Durations holds duration flag values by name; absent flags are 0.
+	Durations map[string]time.Duration
 }
 
 // HandleFunc runs one parsed command invocation. The returned result is
@@ -101,6 +110,10 @@ type Command struct {
 	// Flags are the command-specific flags. Common flags are declared once
 	// on the App and registered persistently.
 	Flags []Flag
+	// PersistentFlags are flags declared on a parent command and inherited
+	// by its subcommands; they parse before the subcommand name. Only
+	// meaningful on commands that own Subcommands.
+	PersistentFlags []Flag
 	// Subcommands nest under this command (store path, store reset).
 	Subcommands []*Command
 	// Handle runs the command and returns the result the adapter writes.
@@ -182,7 +195,7 @@ func validate(app *App) error {
 func validateFlags(command string, flags []Flag) error {
 	for _, f := range flags {
 		switch f.Kind {
-		case String, Bool, Repeat:
+		case String, Bool, Repeat, Int, Duration:
 		default:
 			return UsageErrorf("command %q flag %q has unknown kind %d", command, f.Name, f.Kind)
 		}

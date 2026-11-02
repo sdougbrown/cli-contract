@@ -8,6 +8,7 @@ import (
 	"os"
 	"strings"
 	"syscall"
+	"time"
 
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
@@ -118,6 +119,10 @@ func addFlags(fs *pflag.FlagSet, flags []Flag) {
 			}
 		case Repeat:
 			fs.StringArray(f.Name, nil, f.Usage)
+		case Int:
+			fs.Int(f.Name, 0, f.Usage)
+		case Duration:
+			fs.Duration(f.Name, 0, f.Usage)
 		default:
 			fs.String(f.Name, "", f.Usage)
 		}
@@ -137,10 +142,12 @@ func noArgs(name string) cobra.PositionalArgs {
 // invocationFrom builds the Invocation from one parsed cobra command.
 func invocationFrom(cmd *cobra.Command, c *Command, parent *Command, args []string, common []Flag) (Invocation, error) {
 	inv := Invocation{
-		Sub:   c.Name,
-		Args:  args, // validated by positionalArgs
-		Flags: map[string]string{},
-		Bools: map[string]bool{},
+		Sub:       c.Name,
+		Args:      args, // validated by positionalArgs
+		Flags:     map[string]string{},
+		Bools:     map[string]bool{},
+		Ints:      map[string]int{},
+		Durations: map[string]time.Duration{},
 	}
 	if parent != nil {
 		inv.Command = parent.Name
@@ -163,6 +170,18 @@ func invocationFrom(cmd *cobra.Command, c *Command, parent *Command, args []stri
 				return err
 			}
 			inv.Events = arr
+		case Int:
+			n, err := fs.GetInt(f.Name)
+			if err != nil {
+				return err
+			}
+			inv.Ints[f.Name] = n
+		case Duration:
+			d, err := fs.GetDuration(f.Name)
+			if err != nil {
+				return err
+			}
+			inv.Durations[f.Name] = d
 		default:
 			s, err := fs.GetString(f.Name)
 			if err != nil {
@@ -183,6 +202,13 @@ func invocationFrom(cmd *cobra.Command, c *Command, parent *Command, args []stri
 		}
 		if err := read(f); err != nil {
 			return Invocation{}, err
+		}
+	}
+	if parent != nil {
+		for _, f := range parent.PersistentFlags {
+			if err := read(f); err != nil {
+				return Invocation{}, err
+			}
 		}
 	}
 	return inv, nil
@@ -351,6 +377,7 @@ func (a *App) buildSubTree(exec *execution, runHandlers bool, c *Command) *cobra
 			return UsageErrorf("%s requires a subcommand: %s", c.Name, strings.Join(quoted, " or "))
 		},
 	}
+	addFlags(parent.PersistentFlags(), c.PersistentFlags)
 	for _, sub := range c.Subcommands {
 		subCmd := &cobra.Command{
 			Use:   sub.Name,
