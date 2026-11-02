@@ -129,6 +129,16 @@ inv, err := clicontract.Parse(app, argv)
 Same tree, same validation, no handlers: for harnesses that validate argv
 before executing, and for tests that assert on parsed invocations.
 
+## Conformance spec
+
+The [spec/](spec/) directory holds the language-neutral form of this
+contract: the normative v1 spec ([spec/spec.md](spec/spec.md)), a JSON
+Schema for the declaration document
+([spec/cli-contract.schema.json](spec/cli-contract.schema.json)), and the
+v1 discrepancy ledger. A black-box checker derives cases from a target's
+declared surface and runs them, so a CLI that does not embed the library
+can prove it conforms. Conformance fixtures land in `spec/conformance/`.
+
 ## License
 
 Apache 2.0

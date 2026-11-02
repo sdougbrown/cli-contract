@@ -1,0 +1,147 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://raw.githubusercontent.com/sdougbrown/cli-contract/main/spec/cli-contract.schema.json",
+  "title": "CLI contract declaration document",
+  "description": "The language-neutral declaration a conforming CLI emits: its surface plus the behavior it declares and honors. Spec: spec.md in this directory.",
+  "type": "object",
+  "required": ["version", "name", "commands"],
+  "additionalProperties": false,
+  "properties": {
+    "version": {
+      "const": 1,
+      "description": "The declaration document format version."
+    },
+    "name": {
+      "type": "string",
+      "minLength": 1,
+      "description": "The CLI's program name, as it appears in help and the version line."
+    },
+    "appVersion": {
+      "type": "string",
+      "description": "The CLI's own version string, printed by --version."
+    },
+    "errorPrefix": {
+      "type": "string",
+      "description": "Optional prefix on dispatch-error diagnostics. Empty means the command path alone."
+    },
+    "behavior": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "bareHelp": {
+          "type": "boolean",
+          "default": false,
+          "description": "A bare invocation prints help and exits 0 instead of failing as a caller error."
+        },
+        "handlerOwnedSignals": {
+          "type": "boolean",
+          "default": false,
+          "description": "The app's handlers own signal handling; the library's signal exits do not apply."
+        },
+        "exitCodes": {
+          "type": "object",
+          "description": "The app's exit-code vocabulary beyond the conventions (0, 1, 2, 130, 143). Each member maps a code to the condition that produces it.",
+          "patternProperties": {
+            "^(0|[1-9][0-9]*)$": { "type": "string", "minLength": 1 }
+          },
+          "additionalProperties": false
+        }
+      }
+    },
+    "commonFlags": {
+      "type": "object",
+      "description": "Flags declared once for the whole app, registered on every command.",
+      "additionalProperties": { "$ref": "#/definitions/flag" }
+    },
+    "commands": {
+      "type": "object",
+      "minProperties": 1,
+      "additionalProperties": { "$ref": "#/definitions/command" }
+    }
+  },
+  "definitions": {
+    "flag": {
+      "type": "object",
+      "required": ["kind", "usage"],
+      "additionalProperties": false,
+      "properties": {
+        "kind": {
+          "enum": ["string", "bool", "repeat", "integer", "duration"],
+          "description": "The value kind: repeat collects repeated values under one flag, duration parses a duration string."
+        },
+        "usage": {
+          "type": "string",
+          "minLength": 1,
+          "description": "The flag's documented behavior, rendered in help."
+        },
+        "default": {
+          "description": "The value an absent flag yields. Omitted means the kind's zero value."
+        },
+        "required": {
+          "type": "boolean",
+          "description": "The caller must provide the flag."
+        },
+        "short": {
+          "type": "string",
+          "pattern": "^[a-zA-Z]$",
+          "description": "The optional single-letter shorthand. The h shorthand is reserved for help unless the flag is named help."
+        }
+      }
+    },
+    "positional": {
+      "type": "object",
+      "required": ["name"],
+      "additionalProperties": false,
+      "properties": {
+        "name": { "type": "string", "minLength": 1 },
+        "required": {
+          "type": "boolean",
+          "description": "A required positional renders as <name> and must be present."
+        },
+        "variadic": {
+          "type": "boolean",
+          "description": "A variadic positional (the last one) absorbs any remaining arguments."
+        }
+      }
+    },
+    "command": {
+      "type": "object",
+      "required": ["short"],
+      "additionalProperties": false,
+      "properties": {
+        "short": {
+          "type": "string",
+          "minLength": 1,
+          "description": "The command's help short."
+        },
+        "use": {
+          "type": "string",
+          "description": "The help usage line. Derived from the name and positionals when omitted."
+        },
+        "positionals": {
+          "type": "array",
+          "items": { "$ref": "#/definitions/positional" }
+        },
+        "output": {
+          "enum": ["json-value", "raw-text", "none"],
+          "default": "json-value",
+          "description": "The command's declared output mode on success."
+        },
+        "noInterspersed": {
+          "type": "boolean",
+          "default": false,
+          "description": "Flag parsing stops at the first positional."
+        },
+        "flags": {
+          "type": "object",
+          "description": "The command's own flags; on a command that owns subcommands, these are the persistent flags its subcommands inherit.",
+          "additionalProperties": { "$ref": "#/definitions/flag" }
+        },
+        "subcommands": {
+          "type": "object",
+          "additionalProperties": { "$ref": "#/definitions/command" }
+        }
+      }
+    }
+  }
+}
