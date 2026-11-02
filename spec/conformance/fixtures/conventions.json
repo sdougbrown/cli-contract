@@ -397,6 +397,22 @@
       "expectedExitCode": 0,
       "stdout": "empty",
       "stderr": "empty"
+    },
+    {
+      "id": "inherited-persistent-flag-before-command-names",
+      "argv": [
+        "-region",
+        "eu",
+        "remote",
+        "list"
+      ],
+      "expectedExitCode": 0,
+      "stdout": "json-value",
+      "stdoutMatches": {
+        "/region": "eu",
+        "/command": "remote list"
+      },
+      "stderr": "empty"
     }
   ]
 }
