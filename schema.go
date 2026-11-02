@@ -4,11 +4,12 @@ package clicontract
 // machine consumers. The app composes its full contract document around
 // these pieces (statuses, error codes, and envelope fields are app facts).
 
-// FlagSchema describes one flag as data: the value kind, the usage string,
-// the default (the flag's zero value unless the declaration sets one), and
-// whether the flag is required.
+// FlagSchema describes one flag as data: the value kind, the declared
+// shorthand, the usage string, the default (the flag's zero value unless the
+// declaration sets one), and whether the flag is required.
 type FlagSchema struct {
 	Kind     string `json:"kind"`
+	Short    string `json:"short,omitempty"`
 	Usage    string `json:"usage"`
 	Default  any    `json:"default"`
 	Required bool   `json:"required,omitempty"`
@@ -65,7 +66,7 @@ func defaultOf(f Flag) any {
 
 // flagSchema renders one flag as data.
 func flagSchema(f Flag) FlagSchema {
-	return FlagSchema{Kind: f.Kind.KindSchema(), Usage: f.Usage, Default: defaultOf(f), Required: f.Required}
+	return FlagSchema{Kind: f.Kind.KindSchema(), Short: f.Short, Usage: f.Usage, Default: defaultOf(f), Required: f.Required}
 }
 
 // flagsSchema maps one command's flags by name.

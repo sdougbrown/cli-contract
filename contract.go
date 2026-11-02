@@ -172,8 +172,8 @@ func UsageErrorf(format string, args ...any) *UsageError {
 
 // validate checks one declared App: every command and subcommand has a
 // short, the flag lists the tree builder registers are well-formed and free
-// of repeats, and Handle/Raw are exclusive. Called by Run and Parse so drift
-// fails at startup.
+// of repeats, and Handle/Raw are exclusive. Called by buildTree so drift
+// fails at startup on every entry point.
 func validate(app *App) error {
 	commonNames := make(map[string]bool, len(app.CommonFlags))
 	for _, f := range app.CommonFlags {
@@ -193,10 +193,18 @@ func validate(app *App) error {
 	return nil
 }
 
+// surfaceFlag is one flag on a command's parse surface with the validation
+// label of the declaration it came from: `command "wf"` for an ancestor's
+// persistent flag, "common" for the app's common flags.
+type surfaceFlag struct {
+	Flag
+	declaredBy string
+}
+
 // validateCommand checks one declared command and descends into its
 // subcommands, carrying the flag surface they inherit: the common flags and
 // every ancestor's persistent flags.
-func validateCommand(path string, c *Command, inherited []Flag, commonNames map[string]bool) error {
+func validateCommand(path string, c *Command, inherited []surfaceFlag, commonNames map[string]bool) error {
 	if c.Short == "" {
 		return UsageErrorf("command %q has no help short", path)
 	}
@@ -224,15 +232,18 @@ func validateCommand(path string, c *Command, inherited []Flag, commonNames map[
 	return nil
 }
 
-// declaresHelp reports whether one of these flag lists declares a flag named
+// declaresHelp reports whether a command's surface declares a flag named
 // "help": a merged flag set that has one keeps cobra from claiming the "h"
 // shorthand for its own help flag.
-func declaresHelp(lists ...[]Flag) bool {
-	for _, flags := range lists {
-		for _, f := range flags {
-			if f.Name == "help" {
-				return true
-			}
+func declaresHelp(inherited []surfaceFlag, flags []Flag) bool {
+	for _, f := range inherited {
+		if f.Name == "help" {
+			return true
+		}
+	}
+	for _, f := range flags {
+		if f.Name == "help" {
+			return true
 		}
 	}
 	return false
@@ -248,9 +259,9 @@ func declaresHelp(lists ...[]Flag) bool {
 // both are caller errors here. A flag named "help" anywhere in the surface
 // keeps cobra from claiming the "h" shorthand for its own help flag. A common
 // flag is declared once on the App, so a command that repeats one is a caller
-// error too, while a command may re-declare an ancestor's persistent flag and
-// cobra then parses the command's own.
-func validateFlags(where string, inherited, flags []Flag, commonNames map[string]bool) ([]Flag, error) {
+// error too, while a command may re-declare an ancestor's persistent flag of
+// the same kind and cobra then parses the command's own.
+func validateFlags(where string, inherited []surfaceFlag, flags []Flag, commonNames map[string]bool) ([]surfaceFlag, error) {
 	helpDeclared := declaresHelp(inherited, flags)
 	names := make(map[string]bool, len(flags))
 	for _, f := range flags {
@@ -280,9 +291,18 @@ func validateFlags(where string, inherited, flags []Flag, commonNames map[string
 		if f.Short == "h" && !helpDeclared {
 			return nil, UsageErrorf("%s flag %q uses shorthand %q, reserved for the help flag", where, f.Name, f.Short)
 		}
+		// The shadow takes the name over from the inherited flag, so both
+		// must agree on the kind: pflag keeps only the shadow's value, while
+		// the invocation reads every inherited flag with its own kind.
+		for _, prev := range inherited {
+			if prev.Name == f.Name && prev.Kind != f.Kind {
+				return nil, UsageErrorf("%s flag %q has kind %s, but the same-named flag from %s has kind %s",
+					where, f.Name, f.Kind.KindSchema(), prev.declaredBy, prev.Kind.KindSchema())
+			}
+		}
 		names[f.Name] = true
 	}
-	surface := make([]Flag, 0, len(inherited)+len(flags))
+	surface := make([]surfaceFlag, 0, len(inherited)+len(flags))
 	for _, f := range inherited {
 		// A flag this command declares takes the name, and cobra drops the
 		// inherited one along with its shorthand.
@@ -298,7 +318,7 @@ func validateFlags(where string, inherited, flags []Flag, commonNames map[string
 				}
 			}
 		}
-		surface = append(surface, f)
+		surface = append(surface, surfaceFlag{Flag: f, declaredBy: where})
 	}
 	return surface, nil
 }

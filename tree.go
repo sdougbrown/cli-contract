@@ -327,9 +327,13 @@ func (exec *execution) invocation(ctx context.Context, c *Command, inv Invocatio
 
 // buildTree builds the cobra command tree from the declared commands. The
 // declarations are the single source of truth: every flag, positional rule,
-// and handler binding derives from them, and validate() fails startup on
-// drift.
+// and handler binding derives from them. Every entry point builds through
+// here, so the declaration contract is enforced once: an invalid declaration
+// panics at startup instead of inside pflag at registration.
 func (a *App) buildTree(exec *execution, runHandlers bool) *cobra.Command {
+	if err := validate(a); err != nil {
+		panic(err.Error())
+	}
 	root := &cobra.Command{
 		Use:     a.Name,
 		Short:   a.RootShort,
@@ -489,8 +493,9 @@ func commandNames(cmds []*Command) []string {
 }
 
 // Tree builds the cobra command tree without an adapter: for tests and
-// introspection that walk the registered surface. Dispatching from the
-// returned tree is not supported.
+// introspection that walk the registered surface. An invalid declaration
+// panics here, as it does in Run and Parse. Dispatching from the returned
+// tree is not supported.
 func (a *App) Tree() *cobra.Command {
 	exec := &execution{app: a}
 	return a.buildTree(exec, false)

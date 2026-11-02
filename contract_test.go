@@ -492,6 +492,42 @@ func TestSchemaDerivation(t *testing.T) {
 	}
 }
 
+// TestSchemaRendersShorthand pins that the schema document carries a declared
+// shorthand and stays silent for a flag without one, so a consumer composing
+// argv from the document can discover the short form.
+func TestSchemaRendersShorthand(t *testing.T) {
+	app := &App{
+		Name: "t", Version: "v1",
+		Commands: []*Command{{
+			Name: "probe", Short: "run one probe",
+			Flags: []Flag{
+				{Name: "retries", Kind: Int, Short: "n", Usage: "retry attempts"},
+				{Name: "target", Kind: String, Usage: "probe target"},
+			},
+			Handle: func(ctx context.Context, inv Invocation, _ io.Writer) (any, error) {
+				return nil, nil
+			},
+		}},
+	}
+	raw, err := json.Marshal(app.Schemas())
+	if err != nil {
+		t.Fatal(err)
+	}
+	var doc map[string]struct {
+		Flags map[string]map[string]any `json:"flags"`
+	}
+	if err := json.Unmarshal(raw, &doc); err != nil {
+		t.Fatal(err)
+	}
+	flags := doc["probe"].Flags
+	if got := flags["retries"]["short"]; got != "n" {
+		t.Errorf("--retries short = %v, want n", got)
+	}
+	if got, ok := flags["target"]["short"]; ok {
+		t.Errorf("--target short = %v, want the key absent", got)
+	}
+}
+
 func TestValidatePanicsOnDrift(t *testing.T) {
 	app := testApp()
 	app.Commands = append(app.Commands, &Command{Name: "bogus", Handle: func(ctx context.Context, inv Invocation, _ io.Writer) (any, error) {
@@ -507,6 +543,36 @@ func TestValidatePanicsOnDrift(t *testing.T) {
 		}
 	}()
 	Run(app, &testAdapter{}, []string{"reconcile", "u"}, &bytes.Buffer{}, &bytes.Buffer{})
+}
+
+// TestTreeValidatesTheDeclaration pins that Tree enforces the declaration
+// contract like Run and Parse: an invalid declaration panics with validate's
+// message instead of inside pflag at registration.
+func TestTreeValidatesTheDeclaration(t *testing.T) {
+	app := &App{
+		Name: "t", Version: "v1",
+		Commands: []*Command{{
+			Name: "probe", Short: "run one probe",
+			Flags: []Flag{
+				{Name: "verbose", Kind: Bool, Short: "v", Usage: "log verbosely"},
+				{Name: "vanilla", Kind: Bool, Short: "v", Usage: "log vanilla"},
+			},
+			Handle: func(ctx context.Context, inv Invocation, _ io.Writer) (any, error) {
+				return nil, nil
+			},
+		}},
+	}
+	defer func() {
+		r := recover()
+		if r == nil {
+			t.Fatal("Tree did not validate the declaration")
+		}
+		msg, ok := r.(string)
+		if !ok || !strings.Contains(msg, `flags "verbose" and "vanilla" share the "v" shorthand`) {
+			t.Errorf("panic = %v, want validate's shorthand message", r)
+		}
+	}()
+	app.Tree()
 }
 
 func TestDeadlineAndNotice(t *testing.T) {
@@ -1020,7 +1086,7 @@ func TestSuppliedFlags(t *testing.T) {
 }
 
 // TestShorthandParsesEveryKind pins that Short registers for every flag kind:
-// one argv carries an Int, a Duration and a Repeat in short form.
+// one argv carries an Int, a Duration, a Repeat and a String in short form.
 func TestShorthandParsesEveryKind(t *testing.T) {
 	app := &App{
 		Name:    "t",
@@ -1032,13 +1098,14 @@ func TestShorthandParsesEveryKind(t *testing.T) {
 				{Name: "retries", Kind: Int, Short: "n", Usage: "retry attempts"},
 				{Name: "wait", Kind: Duration, Short: "w", Usage: "how long to wait"},
 				{Name: "tag", Kind: Repeat, Short: "t", Usage: "record tags"},
+				{Name: "output", Kind: String, Short: "o", Usage: "output path"},
 			},
 			Handle: func(ctx context.Context, inv Invocation, _ io.Writer) (any, error) {
 				return map[string]any{"status": "ok"}, nil
 			},
 		}},
 	}
-	inv, err := Parse(app, []string{"job", "-n", "3", "-w", "3s", "-t", "a", "-t", "b"})
+	inv, err := Parse(app, []string{"job", "-n", "3", "-w", "3s", "-t", "a", "-t", "b", "-o", "x"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1051,7 +1118,10 @@ func TestShorthandParsesEveryKind(t *testing.T) {
 	if len(inv.Events) != 2 || inv.Events[0] != "a" || inv.Events[1] != "b" {
 		t.Errorf("events = %v, want [a b] from -t", inv.Events)
 	}
-	for _, name := range []string{"retries", "wait", "tag"} {
+	if inv.Flags["output"] != "x" {
+		t.Errorf("output = %q, want x from -o", inv.Flags["output"])
+	}
+	for _, name := range []string{"retries", "wait", "tag", "output"} {
 		if _, ok := inv.Supplied[name]; !ok {
 			t.Errorf("Supplied[%s] is absent, want present", name)
 		}
@@ -1184,6 +1254,48 @@ func TestValidateRejectsShorthandCollisions(t *testing.T) {
 		code, _, stderr := runApp(t, app, &testAdapter{}, "wf", "list")
 		if code != 0 {
 			t.Errorf("shadowed shorthand: exit = %d, stderr = %s; want a clean run", code, stderr)
+		}
+	})
+}
+
+// TestValidateRejectsKindMismatchedShadow pins the shadow rule: a flag that
+// takes an inherited flag's name must agree with its kind, because pflag keeps
+// only the shadow's value while the invocation reads the inherited flag with
+// the kind it was declared with. A same-kind shadow still parses the leaf's
+// own value.
+func TestValidateRejectsKindMismatchedShadow(t *testing.T) {
+	// shadowApp declares --page on the "wf" parent and shadows it under
+	// "wf list" with leaf.
+	shadowApp := func(leaf Flag) *App {
+		return &App{
+			Name: "t", Version: "v1",
+			Commands: []*Command{{
+				Name: "wf", Short: "workflow utilities",
+				PersistentFlags: []Flag{{Name: "page", Kind: Int, Usage: "page size"}},
+				Subcommands: []*Command{{
+					Name: "list", Short: "list workflows",
+					Flags: []Flag{leaf},
+					Handle: func(ctx context.Context, inv Invocation, _ io.Writer) (any, error) {
+						return map[string]any{"status": "ok"}, nil
+					},
+				}},
+			}},
+		}
+	}
+
+	t.Run("a shadow of a different kind fails at startup", func(t *testing.T) {
+		expectUsagePanic(t, shadowApp(Flag{Name: "page", Kind: String, Usage: "page size"}),
+			[]string{"wf", "list"},
+			`command "wf list" flag "page" has kind string, but the same-named flag from command "wf" has kind integer`)
+	})
+
+	t.Run("a same-kind shadow parses the leaf's value", func(t *testing.T) {
+		inv, err := Parse(shadowApp(Flag{Name: "page", Kind: Int, Usage: "page size"}), []string{"wf", "list", "--page", "5"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if inv.Ints["page"] != 5 {
+			t.Errorf("page = %d, want 5 from the leaf's own --page", inv.Ints["page"])
 		}
 	})
 }

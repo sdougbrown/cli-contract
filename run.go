@@ -15,9 +15,6 @@ import (
 // stderr. Invalid declarations panic at startup: a command without help
 // text would otherwise render blank instead of failing here.
 func Run(app *App, adapter Adapter, argv []string, stdout, stderr io.Writer) int {
-	if err := validate(app); err != nil {
-		panic(err.Error())
-	}
 	command := ""
 	if len(argv) > 0 {
 		command = argv[0]
@@ -138,9 +135,6 @@ type HandlerDiagnostics interface {
 // produce no Invocation (help paths, raw-output commands) return a caller
 // error, matching Run's no-envelope behavior for them.
 func Parse(app *App, argv []string) (Invocation, error) {
-	if err := validate(app); err != nil {
-		panic(err.Error())
-	}
 	if len(argv) == 0 {
 		return Invocation{}, UsageErrorf("missing subcommand")
 	}
