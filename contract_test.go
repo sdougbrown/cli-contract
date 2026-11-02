@@ -6,7 +6,9 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"maps"
 	"os"
+	"slices"
 	"strings"
 	"syscall"
 	"testing"
@@ -871,7 +873,7 @@ func typedFlagApp() *App {
 					{Name: "wait", Kind: Duration, Usage: "how long to wait"},
 					{Name: "verbose", Kind: Bool, Short: "v", Usage: "log verbosely"},
 					{Name: "brief", Kind: Bool, Short: "b", Usage: "log briefly"},
-					{Name: "label", Kind: String, Usage: "probe label"},
+					{Name: "label", Kind: String, Short: "l", Usage: "probe label"},
 				},
 				Handle: func(ctx context.Context, inv Invocation, _ io.Writer) (any, error) {
 					return map[string]any{
@@ -979,6 +981,29 @@ func TestSingleDashLongFlags(t *testing.T) {
 		}
 	})
 
+	t.Run("a lone value-taking shorthand absorbs the next token", func(t *testing.T) {
+		inv, err := Parse(typedFlagApp(), []string{"probe", "-l", "-verbose", "tgt"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if inv.Flags["label"] != "-verbose" {
+			t.Errorf("label = %q, want -verbose: the token is -l's value", inv.Flags["label"])
+		}
+		if inv.Bools["verbose"] {
+			t.Error("verbose = true, want false: the token was -l's value")
+		}
+	})
+
+	t.Run("a cluster ending in a value-taking shorthand absorbs the next token", func(t *testing.T) {
+		inv, err := Parse(typedFlagApp(), []string{"probe", "-vl", "name", "tgt"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !inv.Bools["verbose"] || inv.Flags["label"] != "name" {
+			t.Errorf("verbose = %v, label = %q; want true and name", inv.Bools["verbose"], inv.Flags["label"])
+		}
+	})
+
 	t.Run("tokens after a bare double dash are untouched", func(t *testing.T) {
 		inv, err := Parse(typedFlagApp(), []string{"probe", "tgt", "--", "-label"})
 		if err != nil {
@@ -1048,6 +1073,49 @@ func TestSingleDashLongFlags(t *testing.T) {
 			t.Errorf("agent = %q, want empty: the token is positional", inv.Flags["agent"])
 		}
 	})
+
+	t.Run("a value token spelling another flag stays the value across levels", func(t *testing.T) {
+		inv, err := Parse(typedFlagApp(), []string{"-format", "json", "probe", "tgt", "-label", "-format"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if inv.Flags["format"] != "json" {
+			t.Errorf("format = %q, want json", inv.Flags["format"])
+		}
+		if inv.Flags["label"] != "-format" {
+			t.Errorf("label = %q, want -format: the token was -label's value", inv.Flags["label"])
+		}
+		if len(inv.Args) != 1 || inv.Args[0] != "tgt" {
+			t.Errorf("args = %v, want [tgt]", inv.Args)
+		}
+	})
+
+	t.Run("NoInterspersed passthrough after a common flag keeps tokens byte-identical", func(t *testing.T) {
+		inv, err := Parse(typedFlagApp(), []string{"-format", "json", "scan", "tgt", "-format"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if inv.Flags["format"] != "json" {
+			t.Errorf("format = %q, want json", inv.Flags["format"])
+		}
+		want := []string{"tgt", "-format"}
+		if !slices.Equal(inv.Args, want) {
+			t.Errorf("args = %v, want %v: passthrough tokens must stay byte-identical", inv.Args, want)
+		}
+	})
+
+	t.Run("flags before and after the subcommand name resolve per level", func(t *testing.T) {
+		inv, err := Parse(typedFlagApp(), []string{"-format", "json", "probe", "-label", "x", "tgt"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if inv.Flags["format"] != "json" || inv.Flags["label"] != "x" {
+			t.Errorf("format = %q, label = %q; want json and x", inv.Flags["format"], inv.Flags["label"])
+		}
+		if len(inv.Args) != 1 || inv.Args[0] != "tgt" {
+			t.Errorf("args = %v, want [tgt]", inv.Args)
+		}
+	})
 }
 
 func TestSingleDashLongFlagsOnRun(t *testing.T) {
@@ -1082,6 +1150,15 @@ func TestSingleDashLongFlagsOnRun(t *testing.T) {
 	code, stdout, _ = runApp(t, typedFlagApp(), &testAdapter{}, "-version")
 	if code != 0 || stdout != "toolcli vtest\n" {
 		t.Errorf("-version: exit = %d, stdout = %q; want version and exit 0", code, stdout)
+	}
+
+	// A single-dash -version before a subcommand name still reaches the
+	// root version flag: after the rewrite, cobra's stripFlags consumes
+	// the token after the double-dash flag, so resolution stops at the
+	// root and the version prints instead of a caller error on probe.
+	code, stdout, _ = runApp(t, typedFlagApp(), &testAdapter{}, "-version", "probe")
+	if code != 0 || stdout != "toolcli vtest\n" {
+		t.Errorf("-version probe: exit = %d, stdout = %q; want version and exit 0", code, stdout)
 	}
 	var rootHelp string
 	_, rootHelp, _ = runApp(t, typedFlagApp(), &testAdapter{}, "--help")
@@ -1193,10 +1270,12 @@ func TestValidateRejectsHelpShorthand(t *testing.T) {
 }
 
 // TestSuppliedFlags pins Invocation.Supplied: the names of flags given on
-// the command line, covering every kind and inherited persistent flags. A
-// defaulted flag that was not typed keeps its default value and stays
-// absent from the map, so an explicit zero is distinguishable from absent.
+// the command line, covering every kind and inherited persistent and
+// common flags. A defaulted flag that was not typed keeps its default value
+// and stays absent from the map, so an explicit zero is distinguishable from
+// absent.
 func TestSuppliedFlags(t *testing.T) {
+	var handlerInv Invocation
 	app := &App{
 		Name:    "scli",
 		Version: "vtest",
@@ -1209,9 +1288,13 @@ func TestSuppliedFlags(t *testing.T) {
 			Flags: []Flag{
 				{Name: "name", Kind: String, Usage: "job name"},
 				{Name: "retries", Kind: Int, Usage: "retry attempts", Default: 16},
+				{Name: "verbose", Kind: Bool, Short: "v", Usage: "log verbosely"},
+				{Name: "wait", Kind: Duration, Usage: "how long to wait"},
+				{Name: "tag", Kind: Repeat, Usage: "record tags"},
 			},
 			Handle: func(ctx context.Context, inv Invocation, _ io.Writer) (any, error) {
-				return nil, nil
+				handlerInv = inv
+				return map[string]any{"status": "ok"}, nil
 			},
 		}},
 	}
@@ -1221,24 +1304,110 @@ func TestSuppliedFlags(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !inv.Supplied["name"] || inv.Flags["name"] != "" {
-		t.Errorf("Supplied[name] = %v, Flags[name] = %q; want true and \"\"", inv.Supplied["name"], inv.Flags["name"])
+	if _, ok := inv.Supplied["name"]; !ok {
+		t.Error("Supplied[name] is absent, want present: the flag was typed")
+	}
+	if inv.Flags["name"] != "" {
+		t.Errorf("Flags[name] = %q, want the explicit empty value", inv.Flags["name"])
 	}
 
-	// An omitted flag with a declared default is not Supplied.
+	// An omitted flag with a declared default keeps its value and stays
+	// absent from Supplied.
 	inv, err = Parse(app, []string{"job"})
 	if err != nil {
 		t.Fatal(err)
 	}
+	if _, ok := inv.Supplied["retries"]; ok {
+		t.Error("Supplied[retries] is present, want absent: the flag was not typed")
+	}
 	if inv.Ints["retries"] != 16 {
 		t.Errorf("retries = %d, want the declared default 16", inv.Ints["retries"])
 	}
-	if inv.Supplied["retries"] {
-		t.Error("Supplied[retries] = true, want false: the flag was not typed")
+
+	// A bool flag is Supplied given as its long name.
+	inv, err = Parse(app, []string{"job", "--verbose"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := inv.Supplied["verbose"]; !ok {
+		t.Error("Supplied[verbose] is absent, want present for --verbose")
+	}
+	if !inv.Bools["verbose"] {
+		t.Error("verbose = false, want true")
 	}
 
-	// A common flag given before the subcommand... a persistent flag given
-	// before a nested name is Supplied on the leaf's Invocation.
+	// And given as its shorthand.
+	inv, err = Parse(app, []string{"job", "-v"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := inv.Supplied["verbose"]; !ok {
+		t.Error("Supplied[verbose] is absent, want present for -v")
+	}
+
+	// A repeat flag is Supplied with every value collected.
+	inv, err = Parse(app, []string{"job", "--tag", "a", "--tag=b"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := inv.Supplied["tag"]; !ok {
+		t.Error("Supplied[tag] is absent, want present")
+	}
+	if len(inv.Events) != 2 || inv.Events[0] != "a" || inv.Events[1] != "b" {
+		t.Errorf("events = %v, want [a b]", inv.Events)
+	}
+
+	// A common flag given before the subcommand is Supplied.
+	inv, err = Parse(app, []string{"-format", "json", "job"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := inv.Supplied["format"]; !ok {
+		t.Error("Supplied[format] is absent, want present")
+	}
+	if inv.Flags["format"] != "json" {
+		t.Errorf("format = %q, want json", inv.Flags["format"])
+	}
+
+	// A Duration flag is Supplied when typed.
+	inv, err = Parse(app, []string{"job", "--wait", "3s"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := inv.Supplied["wait"]; !ok {
+		t.Error("Supplied[wait] is absent, want present for --wait")
+	}
+	if inv.Durations["wait"] != 3*time.Second {
+		t.Errorf("wait = %v, want 3s", inv.Durations["wait"])
+	}
+
+	// A repeated bool is Supplied once, with the last value.
+	inv, err = Parse(app, []string{"job", "--verbose", "--verbose=false"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := inv.Supplied["verbose"]; !ok {
+		t.Error("Supplied[verbose] is absent, want present")
+	}
+	if inv.Bools["verbose"] {
+		t.Error("verbose = true, want false: the last value wins")
+	}
+
+	// The handler sees the same Supplied as Parse for the same argv.
+	argv := []string{"-format", "json", "job", "-v", "--name", "x", "--tag", "t1", "--tag=t2"}
+	if code, _, _ := runApp(t, app, &testAdapter{}, argv...); code != 0 {
+		t.Fatalf("exit = %d, want 0", code)
+	}
+	parsed, err := Parse(app, argv)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !maps.Equal(handlerInv.Supplied, parsed.Supplied) {
+		t.Errorf("handler Supplied = %v, want Parse's %v", handlerInv.Supplied, parsed.Supplied)
+	}
+
+	// A persistent flag given before a nested name is Supplied on the
+	// leaf's Invocation.
 	nested := &App{
 		Name:    "ncli",
 		Version: "vtest",
@@ -1261,7 +1430,169 @@ func TestSuppliedFlags(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !inv.Supplied["region"] || inv.Flags["region"] != "eu" {
-		t.Errorf("Supplied[region] = %v, Flags[region] = %q; want true and eu", inv.Supplied["region"], inv.Flags["region"])
+	if _, ok := inv.Supplied["region"]; !ok {
+		t.Error("Supplied[region] is absent, want present")
+	}
+	if inv.Flags["region"] != "eu" {
+		t.Errorf("region = %q, want eu", inv.Flags["region"])
+	}
+}
+
+// TestValidateRejectsReservedShorthandOnPersistentFlags pins that the
+// reserved-shorthand guard covers every node's persistent flags: they
+// inherit into the subcommands' flag sets, where pflag would otherwise
+// panic during execute.
+func TestValidateRejectsReservedShorthandOnPersistentFlags(t *testing.T) {
+	t.Run("a top-level parent", func(t *testing.T) {
+		app := &App{
+			Name: "t", Version: "v1",
+			Commands: []*Command{{
+				Name:  "wf",
+				Short: "workflow parent",
+				PersistentFlags: []Flag{{Name: "history", Kind: Bool, Short: "h", Usage: "keep history"}},
+				Subcommands: []*Command{{
+					Name:  "list",
+					Short: "list workflows",
+					Handle: func(ctx context.Context, inv Invocation, _ io.Writer) (any, error) {
+						return map[string]any{"status": "ok"}, nil
+					},
+				}},
+			}},
+		}
+		defer func() {
+			r := recover()
+			if r == nil {
+				t.Fatal("validate did not reject a reserved shorthand on a parent's persistent flags")
+			}
+			if !strings.Contains(r.(string), `flag "history" uses shorthand "h"`) {
+				t.Errorf("panic = %v, want the library's validation message", r)
+			}
+		}()
+		Run(app, &testAdapter{}, []string{"wf", "list"}, &bytes.Buffer{}, &bytes.Buffer{})
+	})
+
+	t.Run("an inner nested node", func(t *testing.T) {
+		app := &App{
+			Name: "t", Version: "v1",
+			Commands: []*Command{{
+				Name:  "wf",
+				Short: "workflow parent",
+				Subcommands: []*Command{{
+					Name:  "ctl",
+					Short: "controller group",
+					PersistentFlags: []Flag{{Name: "hint", Kind: Bool, Short: "h", Usage: "print a hint"}},
+					Subcommands: []*Command{{
+						Name:  "enable",
+						Short: "enable one controller",
+						Handle: func(ctx context.Context, inv Invocation, _ io.Writer) (any, error) {
+								return map[string]any{"status": "ok"}, nil
+						},
+					}},
+				}},
+			}},
+		}
+		defer func() {
+			r := recover()
+			if r == nil {
+				t.Fatal("validate did not reject a reserved shorthand on an inner node's persistent flags")
+			}
+			if !strings.Contains(r.(string), `command "wf ctl" flag "hint" uses shorthand "h"`) {
+				t.Errorf("panic = %v, want the library's validation message", r)
+			}
+		}()
+		Run(app, &testAdapter{}, []string{"wf", "ctl", "enable"}, &bytes.Buffer{}, &bytes.Buffer{})
+	})
+}
+
+// TestDeclaredHelpFlag pins that an app's own "help" flag keeps working:
+// cobra defers to it and skips its own help flag, so the declaration passes
+// validation and -h parses as the app's flag.
+func TestDeclaredHelpFlag(t *testing.T) {
+	app := &App{
+		Name: "t", Version: "v1",
+		Commands: []*Command{{
+			Name:  "probe",
+			Short: "run one probe",
+			Flags: []Flag{{Name: "help", Kind: Bool, Short: "h", Usage: "show help"}},
+			Handle: func(ctx context.Context, inv Invocation, _ io.Writer) (any, error) {
+				return map[string]any{"command": "probe", "status": "ok"}, nil
+			},
+		}},
+	}
+	for _, argv := range [][]string{{"probe", "-h"}, {"probe", "--help"}, {"probe", "-help"}} {
+		code, stdout, stderr := runApp(t, app, &testAdapter{}, argv...)
+		if code != 0 {
+			t.Errorf("%v: exit = %d, want 0 (stderr: %s)", argv, code, stderr)
+			continue
+		}
+		if strings.HasPrefix(strings.TrimSpace(stdout), "{") {
+			t.Errorf("%v: stdout = %q, want plain help text", argv, stdout)
+		}
+	}
+
+	// A normal dispatch is unaffected by the declared help flag.
+	code, stdout, _ := runApp(t, app, &testAdapter{}, "probe")
+	if code != 0 {
+		t.Fatalf("probe: exit = %d, want 0", code)
+	}
+	var envelope map[string]any
+	if err := json.Unmarshal([]byte(stdout), &envelope); err != nil {
+		t.Fatalf("probe: stdout is not one JSON value: %v (%q)", err, stdout)
+	}
+	if envelope["command"] != "probe" {
+		t.Errorf("envelope = %v, want the dispatched probe", envelope)
+	}
+}
+
+// TestParseValidatesLikeRun pins that Parse reports invalid declarations
+// with the same validation failure Run reports, instead of failing later
+// in the parse with a different message.
+func TestParseValidatesLikeRun(t *testing.T) {
+	mk := func() *App {
+		app := testApp()
+		app.Commands[0].Flags = append(app.Commands[0].Flags,
+			Flag{Name: "hint", Kind: Bool, Short: "h", Usage: "print a hint"})
+		return app
+	}
+
+	var runMsg string
+	func() {
+		defer func() { runMsg, _ = recover().(string) }()
+		Run(mk(), &testAdapter{}, []string{"reconcile", "u"}, &bytes.Buffer{}, &bytes.Buffer{})
+	}()
+	if runMsg == "" {
+		t.Fatal("Run did not panic on the invalid declaration")
+	}
+	if !strings.Contains(runMsg, `flag "hint" uses shorthand "h"`) {
+		t.Errorf("Run panic = %q, want the library's validation message", runMsg)
+	}
+
+	var parseMsg string
+	func() {
+		defer func() { parseMsg, _ = recover().(string) }()
+		Parse(mk(), []string{"reconcile", "u"})
+	}()
+	if parseMsg != runMsg {
+		t.Errorf("Parse panic = %q, want Run's %q", parseMsg, runMsg)
+	}
+}
+
+// TestRunNilArgvFallsBackToOsArgs pins the nil-argv convention: Run passes
+// os.Args[1:] through normalization, so single-dash long flags work on the
+// real command line too.
+func TestRunNilArgvFallsBackToOsArgs(t *testing.T) {
+	orig := os.Args
+	defer func() { os.Args = orig }()
+
+	var nilOut, explicitOut bytes.Buffer
+	os.Args = []string{"testcli", "reconcile", "-head", "abc", "u"}
+	nilCode := Run(testApp(), &testAdapter{}, nil, &nilOut, io.Discard)
+	os.Args = []string{"testcli", "reconcile", "--head", "abc", "u"}
+	explicitCode := Run(testApp(), &testAdapter{}, os.Args[1:], &explicitOut, io.Discard)
+	if nilCode != 0 || explicitCode != 0 {
+		t.Fatalf("exit codes = %d and %d, want 0 and 0", nilCode, explicitCode)
+	}
+	if nilOut.String() != explicitOut.String() {
+		t.Errorf("nil argv stdout = %q, want the explicit run's %q", nilOut.String(), explicitOut.String())
 	}
 }

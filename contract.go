@@ -190,6 +190,9 @@ func validate(app *App) error {
 		if err := validateFlags(cmd.Name, cmd.Flags); err != nil {
 			return err
 		}
+		if err := validateFlags(cmd.Name, cmd.PersistentFlags); err != nil {
+			return err
+		}
 		for _, sub := range cmd.Subcommands {
 			if err := validateNested(cmd.Name, sub); err != nil {
 				return err
@@ -201,11 +204,18 @@ func validate(app *App) error {
 
 // validateFlags checks one flag list: named, known kind, and a usage string.
 // validateNested checks one nested node recursively: help text everywhere,
-// and exactly one of Handle or Raw on leaves only.
+// well-formed flags on every node, and exactly one of Handle or Raw on
+// leaves only.
 func validateNested(parent string, sub *Command) error {
 	path := parent + " " + sub.Name
 	if sub.Short == "" {
 		return UsageErrorf("command %q has no help short", path)
+	}
+	if err := validateFlags(path, sub.Flags); err != nil {
+		return err
+	}
+	if err := validateFlags(path, sub.PersistentFlags); err != nil {
+		return err
 	}
 	if len(sub.Subcommands) > 0 {
 		for _, inner := range sub.Subcommands {
@@ -218,7 +228,7 @@ func validateNested(parent string, sub *Command) error {
 	if (sub.Handle == nil) == (sub.Raw == nil) {
 		return UsageErrorf("command %q must declare exactly one of Handle or Raw", path)
 	}
-	return validateFlags(path, sub.Flags)
+	return nil
 }
 
 func validateFlags(command string, flags []Flag) error {
@@ -235,8 +245,10 @@ func validateFlags(command string, flags []Flag) error {
 			return UsageErrorf("command %q has an unnamed flag", command)
 		}
 		// Cobra's default help flag claims the "h" shorthand on every
-		// command during execute; a declaration using it would panic there.
-		if f.Short == "h" {
+		// command during execute; a declaration using it would panic
+		// there. A flag named "help" is exempt: cobra defers to the
+		// app's own flag then, so it may claim "h".
+		if f.Short == "h" && f.Name != "help" {
 			return UsageErrorf("command %q flag %q uses shorthand %q, reserved for the help flag", command, f.Name, f.Short)
 		}
 	}

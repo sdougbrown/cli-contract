@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"slices"
 	"strings"
 	"syscall"
 	"time"
@@ -125,27 +124,41 @@ func addFlags(fs *pflag.FlagSet, flags []Flag) {
 				fs.Bool(f.Name, false, f.Usage)
 			}
 		case Repeat:
-			fs.StringArray(f.Name, nil, f.Usage)
+			if f.Short != "" {
+				fs.StringArrayP(f.Name, f.Short, nil, f.Usage)
+			} else {
+				fs.StringArray(f.Name, nil, f.Usage)
+			}
 		case Int:
 			def := 0
 			if v, ok := f.Default.(int); ok {
 				def = v
 			}
-			fs.Int(f.Name, def, f.Usage)
+			if f.Short != "" {
+				fs.IntP(f.Name, f.Short, def, f.Usage)
+			} else {
+				fs.Int(f.Name, def, f.Usage)
+			}
 		case Duration:
 			def := time.Duration(0)
 			if v, ok := f.Default.(time.Duration); ok {
 				def = v
 			}
-			fs.Duration(f.Name, def, f.Usage)
-		case String:
+			if f.Short != "" {
+				fs.DurationP(f.Name, f.Short, def, f.Usage)
+			} else {
+				fs.Duration(f.Name, def, f.Usage)
+			}
+		default: // String
 			def := ""
 			if v, ok := f.Default.(string); ok {
 				def = v
 			}
-			fs.String(f.Name, def, f.Usage)
-		default:
-			fs.String(f.Name, "", f.Usage)
+			if f.Short != "" {
+				fs.StringP(f.Name, f.Short, def, f.Usage)
+			} else {
+				fs.String(f.Name, def, f.Usage)
+			}
 		}
 	}
 }
@@ -190,8 +203,11 @@ func invocationFrom(cmd *cobra.Command, c *Command, ancestors []*Command, args [
 	read := func(f Flag) error {
 		// Supplied is pflag's Changed, recorded where the value is read:
 		// every kind, and inherited persistent flags parsed at this
-		// command, land in the same map.
-		inv.Supplied[f.Name] = fs.Changed(f.Name)
+		// command, land in the same map — and only flags that were
+		// given, so an omitted flag is absent.
+		if fs.Changed(f.Name) {
+			inv.Supplied[f.Name] = true
+		}
 		switch f.Kind {
 		case Bool:
 			b, err := fs.GetBool(f.Name)
@@ -471,127 +487,110 @@ func commandNames(cmds []*Command) []string {
 	return names
 }
 
-// declaredPath returns the resolved command's cobra names below the root:
-// ["remote", "list"] for `app remote list`, nil for the root itself.
-func declaredPath(root, cmd *cobra.Command) []string {
-	var names []string
-	for c := cmd; c != root; c = c.Parent() {
-		if c == nil {
-			return nil
-		}
-		names = append([]string{c.Name()}, names...)
-	}
-	return names
+// levelFlags is the flag surface of one level of the declared tree: the
+// long names and shorthands a token may spell there, each mapped to
+// whether it takes a value.
+type levelFlags struct {
+	longs  map[string]bool
+	shorts map[string]bool
 }
 
-// declaredCommand resolves the declared *Command for one cobra command path,
-// or nil when no declaration matches (cobra's own help command, unknown
-// names). NoInterspersed and other per-declaration settings read from here.
-func (a *App) declaredCommand(names []string) *Command {
-	var cur *Command
-	for i, name := range names {
-		children := a.Commands
-		if i > 0 {
-			children = cur.Subcommands
+// add records one declared flag list in the surface. A later list wins a
+// repeated name, mirroring how cobra keeps a command's own flag over the
+// persistent flags merged in after it.
+func (lf *levelFlags) add(flags []Flag) {
+	for _, f := range flags {
+		lf.longs[f.Name] = f.Kind != Bool
+		if f.Short != "" {
+			lf.shorts[f.Short] = f.Kind != Bool
 		}
-		var next *Command
-		for _, c := range children {
-			if c.Name == name {
-				next = c
-				break
+	}
+}
+
+// levelFlags builds the flag surface of the command at the end of path
+// (nil path is the root): the app's common flags, the persistent flags of
+// every command on the path, and the current command's own flags. Cobra's
+// help flag — and the version flag on a versioned root — counts as a
+// declared bool wherever the app did not declare the same name, since
+// cobra defers to the app's flag then.
+func (a *App) levelFlags(path []*Command) *levelFlags {
+	lf := &levelFlags{
+		longs:  make(map[string]bool, len(a.CommonFlags)+2),
+		shorts: make(map[string]bool),
+	}
+	lf.add(a.CommonFlags)
+	for _, c := range path {
+		lf.add(c.PersistentFlags)
+	}
+	if len(path) > 0 {
+		lf.add(path[len(path)-1].Flags)
+	}
+	if _, ok := lf.longs["help"]; !ok {
+		lf.longs["help"] = false
+		if _, ok := lf.shorts["h"]; !ok {
+			lf.shorts["h"] = false
+		}
+	}
+	if len(path) == 0 && a.Version != "" {
+		if _, ok := lf.longs["version"]; !ok {
+			lf.longs["version"] = false
+			if _, ok := lf.shorts["v"]; !ok {
+				lf.shorts["v"] = false
 			}
 		}
-		if next == nil {
-			return nil
-		}
-		cur = next
 	}
-	return cur
+	return lf
+}
+
+// subcommand returns the declared subcommand of the command at the end of
+// path (nil path is the root) that arg names, or nil.
+func (a *App) subcommand(path []*Command, arg string) *Command {
+	children := a.Commands
+	if len(path) > 0 {
+		children = path[len(path)-1].Subcommands
+	}
+	for _, c := range children {
+		if c.Name == arg {
+			return c
+		}
+	}
+	return nil
 }
 
 // normalizeArgv rewrites single-dash long flags to their double-dash form
 // before cobra parses: pflag reads a token like -agent as the shorthand
 // cluster -a -g -e -n -t, so callers used to the standard flag package's
-// -agent, -agent=x and -agent x forms would fail. A token is rewritten
-// only when its name is longer than one character and is a declared long
-// flag of the resolved command — the command's own flags, inherited
-// persistent and common flags, and cobra's help and version flags, which
-// are treated as declared without being registered early. Everything else
-// passes through for pflag to handle: tokens after a bare --, value tokens
-// that follow a value-taking flag, undeclared names such as -bogus, and
-// shorthand clusters like -vf, which are never read as long names.
+// -agent, -agent=x and -agent x forms would fail.
 //
-// A nil argv stays nil: cobra falls back to os.Args when a command's args
-// are nil, and Run keeps that convention for a nil argv.
-func (a *App) normalizeArgv(root *cobra.Command, argv []string) []string {
+// The rewrite is one left-to-right walk over the declared tree, mirroring
+// cobra's own resolution for this library's surface (no command aliases;
+// every flag is declared through the library). The walk tracks the
+// declared command the invocation is inside, starting at the root: a
+// non-flag token that names a declared subcommand, before any positional
+// at the current level, descends the walk into that subcommand, and every
+// other token resolves against the current level's flag surface.
+// Everything the walk does not resolve passes through for pflag to
+// handle: tokens after a bare --, value tokens that follow a value-taking
+// flag, undeclared names such as -bogus, and shorthand clusters like -vf,
+// which are never read as long names. A single-dash token that spells a
+// declared long flag is read as that flag, even when its letters are
+// also bool shorthands: the long name wins.
+//
+// A nil argv reads the process's own os.Args[1:], so single-dash long
+// flags work on the real command line too.
+func (a *App) normalizeArgv(argv []string) []string {
 	if argv == nil {
-		return nil
+		argv = os.Args[1:]
 	}
 	out := make([]string, len(argv))
 	copy(out, argv)
-	// Rewriting a flag that sits before a subcommand name changes what
-	// cobra's stripFlags consumes during Find, so resolve and rewrite
-	// again until nothing changes; the rewrite only ever turns single-dash
-	// tokens into double-dash ones, so this terminates.
-	for range len(argv) + 1 {
-		cmd, _, _ := root.Find(out)
-		if cmd == nil {
-			return out
-		}
-		// Cobra merges persistent and inherited flags into a command's
-		// flag set lazily during execute; the rewrite needs the same view
-		// of declared flags that parsing will see.
-		cmd.LocalFlags()
-		next := a.rewriteArgv(root, cmd, out)
-		if slices.Equal(next, out) {
-			return next
-		}
-		out = next
-	}
-	return out
-}
-
-// rewriteArgv rewrites one argv pass for the resolved command. The resolved
-// command's names mark where the command path ends in argv: only tokens
-// after it count as positionals, so a NoInterspersed command stops rewriting
-// at its first positional without treating its own name as one.
-func (a *App) rewriteArgv(root, cmd *cobra.Command, argv []string) []string {
-	out := make([]string, len(argv))
-	copy(out, argv)
-	flags := cmd.Flags()
-	// Cobra declares the help flag on every command and the version flag
-	// on the root during execute; the rewrite treats those names as
-	// declared bools without registering anything early. A flag the app
-	// declares under the same name decides instead, since cobra defers
-	// to it and skips its own.
-	declaredBool := func(name string) bool {
-		if flags.Lookup(name) != nil {
-			return false
-		}
-		return name == "help" || (name == "version" && cmd == root && a.Version != "")
-	}
-	// noInterspersed comes from the declaration that matches the resolved
-	// path, so nested commands honor it like top-level ones.
-	chain := declaredPath(root, cmd)
-	declared := a.declaredCommand(chain)
-	noInterspersed := declared != nil && declared.NoInterspersed
-
-	// pathNext walks the resolved command names; cmdEnd is the first argv
-	// index past the command path, where positionals begin.
-	pathNext := 0
-	cmdEnd := 0
-	// valueNext marks that pflag reads the next token as the current
-	// flag's value, so that token is never rewritten.
-	valueNext := false
-	// stop mirrors non-interspersed parsing: from the first positional on,
-	// every token is a positional.
-	stop := false
+	var path []*Command         // declared commands below the root, innermost last
+	flags := a.levelFlags(path) // the root level: common flags, help, version
+	positional := false        // a positional was seen at the current level
+	valueNext := false         // the previous token takes this one as its value
 	for i, arg := range out {
 		if valueNext {
 			valueNext = false
-			continue
-		}
-		if stop {
 			continue
 		}
 		switch {
@@ -599,30 +598,28 @@ func (a *App) rewriteArgv(root, cmd *cobra.Command, argv []string) []string {
 			return out
 		case strings.HasPrefix(arg, "--"):
 			name, _, hasValue := strings.Cut(arg[2:], "=")
-			if !hasValue {
-				if f := flags.Lookup(name); f != nil && f.NoOptDefVal == "" {
-					valueNext = true
-				}
-			}
+			valueNext = !hasValue && flags.longs[name]
 		case strings.HasPrefix(arg, "-") && len(arg) > 1:
 			name, _, hasValue := strings.Cut(arg[1:], "=")
-			f := flags.Lookup(name)
-			if len(name) > 1 && (f != nil || declaredBool(name)) {
+			if takesValue, known := flags.longs[name]; len(name) > 1 && known {
 				out[i] = "-" + arg // -name and -name=value become --name and --name=value
-				if !hasValue && f != nil && f.NoOptDefVal == "" {
-					valueNext = true
-				}
+				valueNext = !hasValue && takesValue
 				continue
 			}
-			if !hasValue && shorthandTakesNext(flags, name) {
-				valueNext = true
+			if !hasValue {
+				valueNext = shorthandTakesNext(flags.shorts, name)
 			}
 		default:
-			if pathNext < len(chain) && arg == chain[pathNext] {
-				pathNext++
-				cmdEnd = i + 1
-			} else if i >= cmdEnd && noInterspersed {
-				stop = true
+			if sub := a.subcommand(path, arg); sub != nil && !positional {
+				path = append(path, sub)
+				flags = a.levelFlags(path)
+				continue
+			}
+			positional = true
+			if len(path) > 0 && path[len(path)-1].NoInterspersed {
+				// From the first positional on, every token belongs to
+				// the command's argument list.
+				return out
 			}
 		}
 	}
@@ -634,13 +631,13 @@ func (a *App) rewriteArgv(root, cmd *cobra.Command, argv []string) []string {
 // value-taking shorthand, and for a cluster whose parsing reaches a final
 // value-taking shorthand; false once an unknown shorthand makes pflag
 // fail or a value-taking shorthand absorbs the rest of the cluster.
-func shorthandTakesNext(flags *pflag.FlagSet, cluster string) bool {
+func shorthandTakesNext(shorthands map[string]bool, cluster string) bool {
 	for len(cluster) > 0 {
-		f := flags.ShorthandLookup(cluster[:1])
-		if f == nil {
+		takesValue, ok := shorthands[cluster[:1]]
+		if !ok {
 			return false
 		}
-		if f.NoOptDefVal != "" {
+		if !takesValue {
 			cluster = cluster[1:] // bools keep parsing within the cluster
 			continue
 		}

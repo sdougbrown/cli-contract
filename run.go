@@ -27,7 +27,7 @@ func Run(app *App, adapter Adapter, argv []string, stdout, stderr io.Writer) int
 	root := app.buildTree(exec, true)
 	root.SetOut(stdout)
 	root.SetErr(stderr)
-	root.SetArgs(app.normalizeArgv(root, argv))
+	root.SetArgs(app.normalizeArgv(argv))
 
 	ctx := context.Background()
 	sigCh := make(chan os.Signal, 1)
@@ -132,12 +132,15 @@ type HandlerDiagnostics interface {
 }
 
 // Parse parses argv (without the program name) without running anything: it
-// executes the tree in parse-only mode, so flags and positionals are
-// validated by the same Args functions dispatch uses, and returns the
-// captured Invocation. Commands that produce no Invocation (help paths,
-// raw-output commands) return a caller error, matching Run's no-envelope
-// behavior for them.
+// validates the declaration like Run, executes the tree in parse-only mode,
+// so flags and positionals are validated by the same Args functions dispatch
+// uses, and returns the captured Invocation. Commands that produce no
+// Invocation (help paths, raw-output commands) return a caller error,
+// matching Run's no-envelope behavior for them.
 func Parse(app *App, argv []string) (Invocation, error) {
+	if err := validate(app); err != nil {
+		panic(err.Error())
+	}
 	if len(argv) == 0 {
 		return Invocation{}, UsageErrorf("missing subcommand")
 	}
@@ -145,7 +148,7 @@ func Parse(app *App, argv []string) (Invocation, error) {
 	root := app.buildTree(exec, false)
 	root.SetOut(io.Discard)
 	root.SetErr(io.Discard)
-	root.SetArgs(app.normalizeArgv(root, argv))
+	root.SetArgs(app.normalizeArgv(argv))
 	if err := root.Execute(); err != nil {
 		return Invocation{}, asUsageError(err)
 	}
