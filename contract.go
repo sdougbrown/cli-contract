@@ -46,6 +46,9 @@ type Flag struct {
 	// Short is the optional single-letter shorthand (for example "f" for
 	// --follow). Empty means none.
 	Short string
+	// Required marks a flag the caller must provide. Rendered as required
+	// in the schema document and in generated manifests.
+	Required bool
 }
 
 // Positional declares one positional argument. Required positionals render
