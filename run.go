@@ -7,6 +7,8 @@ import (
 	"os"
 	"os/signal"
 	"syscall"
+
+	"github.com/spf13/cobra"
 )
 
 // Run executes one CLI invocation: it builds the tree from the declarations,
@@ -16,15 +18,11 @@ import (
 // text would otherwise render blank instead of failing here.
 func Run(app *App, adapter Adapter, argv []string, stdout, stderr io.Writer) int {
 	command := ""
-	if len(argv) > 0 {
-		command = argv[0]
+	if effective := effectiveArgv(argv); len(effective) > 0 {
+		command = effective[0]
 	}
 
 	exec := &execution{app: app, adapter: adapter}
-	root := app.buildTree(exec, true)
-	root.SetOut(stdout)
-	root.SetErr(stderr)
-	root.SetArgs(argv)
 
 	ctx := context.Background()
 	sigCh := make(chan os.Signal, 1)
@@ -39,7 +37,7 @@ func Run(app *App, adapter Adapter, argv []string, stdout, stderr io.Writer) int
 		defer signal.Stop(sigCh)
 	}
 
-	if err := root.ExecuteContext(ctx); err != nil {
+	if err := app.execute(exec, true, argv, stdout, stderr, ctx); err != nil {
 		// Help never reaches here (cobra writes plain help and returns
 		// nil); every error that does is a caller error with the usage
 		// envelope and exit 2.
@@ -121,6 +119,59 @@ func writeDiagnostic(adapter Adapter, stderr io.Writer, inv Invocation, err erro
 	}
 }
 
+// execute builds the tree and runs the parse-and-dispatch passes over argv,
+// handing cobra the argv untouched (nil argv falls back to os.Args[1:]
+// inside cobra). A pass that fails with an error a single-dash long flag
+// can produce runs again with that failing command's spellings rewritten to
+// their double-dash form; each rewrite can expose a deeper command, so the
+// passes repeat while a rewrite changes something. Every pass that retries
+// rewrites at least one token and a rewrite only adds a dash to a token, so
+// the passes are bounded by argv's token count. A pass that rewrites
+// nothing, or a last pass that still fails before dispatch, reports the
+// first pass's error unchanged.
+//
+// A pass that reached a RunE owns its outcome: its result and its error are
+// what the caller gets, so a retry that dispatched is never masked by the
+// parse error that triggered it.
+func (a *App) execute(exec *execution, runHandlers bool, argv []string, stdout, stderr io.Writer, ctx context.Context) error {
+	var firstErr error
+	limit := len(effectiveArgv(argv)) + 1
+	for attempt := 0; attempt < limit; attempt++ {
+		// Each pass records its own flag failure: the command cobra
+		// resolved is what the next rewrite is scoped to.
+		exec.flagErr, exec.flagErrCmd = nil, nil
+		root := readyTree(a, exec, runHandlers, argv, stdout, stderr)
+		err := root.ExecuteContext(ctx)
+		if err == nil {
+			return nil
+		}
+		if attempt == 0 {
+			firstErr = err
+		}
+		if exec.ran || exec.rawRan {
+			return err
+		}
+		retryArgv := a.retryArgv(exec, root, argv)
+		if retryArgv == nil {
+			return firstErr
+		}
+		// The failure preceded every RunE, so no handler has run: rebuild
+		// for clean flag state and parse the rewritten argv again.
+		argv = retryArgv
+	}
+	return firstErr
+}
+
+// readyTree builds one execution's cobra tree bound to its writers and
+// argv.
+func readyTree(a *App, exec *execution, runHandlers bool, argv []string, stdout, stderr io.Writer) *cobra.Command {
+	root := a.buildTree(exec, runHandlers)
+	root.SetOut(stdout)
+	root.SetErr(stderr)
+	root.SetArgs(argv)
+	return root
+}
+
 // HandlerDiagnostics is an optional Adapter extension that formats the
 // stderr diagnostic for handler failures. The default prints the error's
 // message; an empty string prints nothing.
@@ -133,17 +184,11 @@ type HandlerDiagnostics interface {
 // mode, so flags and positionals are validated by the same Args functions
 // dispatch uses, and returns the captured Invocation. Commands that
 // produce no Invocation (help paths, raw-output commands) return a caller
-// error, matching Run's no-envelope behavior for them.
+// error, matching Run's no-envelope behavior for them. Nil argv is the
+// process's own arguments, as in Run.
 func Parse(app *App, argv []string) (Invocation, error) {
-	if len(argv) == 0 {
-		return Invocation{}, UsageErrorf("missing subcommand")
-	}
 	exec := &execution{app: app, adapter: nil}
-	root := app.buildTree(exec, false)
-	root.SetOut(io.Discard)
-	root.SetErr(io.Discard)
-	root.SetArgs(argv)
-	if err := root.Execute(); err != nil {
+	if err := app.execute(exec, false, argv, io.Discard, io.Discard, context.Background()); err != nil {
 		return Invocation{}, asUsageError(err)
 	}
 	if !exec.ran && !exec.rawRan {

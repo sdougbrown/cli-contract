@@ -98,6 +98,13 @@ type execution struct {
 	// output, so Run exits 0 without a result, but Parse still yields
 	// its invocation.
 	rawRan bool
+	// flagErr holds the raw pflag error of the last flag-parse failure,
+	// with flagErrCmd the command cobra resolved for that parse. Set by
+	// the root's flag error func (inherited by every child), read by the
+	// single-dash retry to detect the error classes a single-dash long
+	// flag produces.
+	flagErr    error
+	flagErrCmd *cobra.Command
 }
 
 // asUsageError guarantees the usage classification for every dispatch-level
@@ -362,7 +369,11 @@ func (a *App) buildTree(exec *execution, runHandlers bool) *cobra.Command {
 	root.SetVersionTemplate(versionTemplate)
 	// Flag errors and unknown commands are caller errors: code them as
 	// usage errors so the envelope reports the usage classification.
+	// The raw pflag error and the command cobra resolved are recorded on
+	// exec for the single-dash retry; children inherit this function
+	// through FlagErrorFunc.
 	root.SetFlagErrorFunc(func(cmd *cobra.Command, err error) error {
+		exec.flagErrCmd, exec.flagErr = cmd, err
 		return a.errf(a.pathOf(root, cmd), "%v", err)
 	})
 	// The default help command reports unknown topics on stdout and exits
