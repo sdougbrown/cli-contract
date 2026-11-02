@@ -1651,3 +1651,97 @@ func TestRunNilArgvFallsBackToOsArgs(t *testing.T) {
 		t.Errorf("nil argv stdout = %q, want the explicit run's %q", nilOut.String(), explicitOut.String())
 	}
 }
+
+// TestValidateRejectsShorthandCollisions pins the shorthand validation:
+// a multi-character shorthand, and two flags that share a shorthand across
+// a command's effective surface, fail at startup as UsageErrors instead of
+// panicking inside pflag at registration. A flag that shadows a same-named
+// one keeps its shorthand.
+func TestValidateRejectsShorthandCollisions(t *testing.T) {
+	expectPanic := func(t *testing.T, app *App, want string) {
+		t.Helper()
+		defer func() {
+			r := recover()
+			if r == nil {
+				t.Fatal("validate did not reject the declaration")
+			}
+			if !strings.Contains(r.(string), want) {
+				t.Errorf("panic = %v, want it to contain %q", r, want)
+			}
+		}()
+		Run(app, &testAdapter{}, []string{"probe", "u"}, &bytes.Buffer{}, &bytes.Buffer{})
+	}
+
+	t.Run("two flags of one command sharing a shorthand", func(t *testing.T) {
+		expectPanic(t, &App{
+			Name: "t", Version: "v1",
+			Commands: []*Command{{
+				Name: "probe", Short: "run one probe",
+				Flags: []Flag{
+					{Name: "verbose", Kind: Bool, Short: "v", Usage: "log verbosely"},
+					{Name: "vanilla", Kind: Bool, Short: "v", Usage: "log vanilla"},
+				},
+				Handle: func(ctx context.Context, inv Invocation, _ io.Writer) (any, error) { return nil, nil },
+			}},
+		}, `flags "verbose" and "vanilla" share the "v" shorthand`)
+	})
+
+	t.Run("a common flag and a command flag sharing a shorthand", func(t *testing.T) {
+		expectPanic(t, &App{
+			Name: "t", Version: "v1",
+			CommonFlags: []Flag{{Name: "format", Kind: String, Short: "f", Usage: "output format"}},
+			Commands: []*Command{{
+				Name: "probe", Short: "run one probe",
+				Flags: []Flag{{Name: "filter", Kind: String, Short: "f", Usage: "filter expression"}},
+				Handle: func(ctx context.Context, inv Invocation, _ io.Writer) (any, error) { return nil, nil },
+			}},
+		}, `flags "format" and "filter" share the "f" shorthand`)
+	})
+
+	t.Run("an inherited persistent flag and a leaf flag sharing a shorthand", func(t *testing.T) {
+		expectPanic(t, &App{
+			Name: "t", Version: "v1",
+			Commands: []*Command{{
+				Name: "wf", Short: "workflow utilities",
+				PersistentFlags: []Flag{{Name: "page", Kind: Int, Short: "p", Usage: "page size"}},
+				Subcommands: []*Command{{
+					Name: "list", Short: "list workflows",
+					Flags: []Flag{{Name: "pretty", Kind: Bool, Short: "p", Usage: "print pretty"}},
+					Handle: func(ctx context.Context, inv Invocation, _ io.Writer) (any, error) { return nil, nil },
+				}},
+			}},
+		}, `flags "page" and "pretty" share the "p" shorthand`)
+	})
+
+	t.Run("a multi-character shorthand", func(t *testing.T) {
+		expectPanic(t, &App{
+			Name: "t", Version: "v1",
+			Commands: []*Command{{
+				Name: "probe", Short: "run one probe",
+				Flags: []Flag{{Name: "verbose", Kind: Bool, Short: "vv", Usage: "log verbosely"}},
+				Handle: func(ctx context.Context, inv Invocation, _ io.Writer) (any, error) { return nil, nil },
+			}},
+		}, `flag "verbose" uses shorthand "vv", want one letter`)
+	})
+
+	t.Run("a same-named flag shadows with the same shorthand", func(t *testing.T) {
+		app := &App{
+			Name: "t", Version: "v1",
+			Commands: []*Command{{
+				Name: "wf", Short: "workflow utilities",
+				PersistentFlags: []Flag{{Name: "page", Kind: Int, Short: "p", Usage: "page size"}},
+				Subcommands: []*Command{{
+					Name: "list", Short: "list workflows",
+					Flags: []Flag{{Name: "page", Kind: Int, Short: "p", Usage: "page size"}},
+					Handle: func(ctx context.Context, inv Invocation, _ io.Writer) (any, error) {
+						return map[string]any{"status": "ok"}, nil
+					},
+				}},
+			}},
+		}
+		code, _, stderr := runApp(t, app, &testAdapter{}, "wf", "list")
+		if code != 0 {
+			t.Errorf("shadowed shorthand: exit = %d, stderr: %s; want a clean run", code, stderr)
+		}
+	})
+}

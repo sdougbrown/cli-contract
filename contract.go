@@ -199,6 +199,71 @@ func validate(app *App) error {
 			}
 		}
 	}
+	return validateShorthands(app)
+}
+
+// validateShorthands rejects declarations whose shorthands collide across
+// a command's effective surface — the app's common flags, every
+// ancestor's persistent flags, and the command's own flags. pflag panics
+// at registration on such a collision; failing at startup keeps the
+// declaration error a UsageError. A flag that shadows a same-named one
+// keeps its shorthand: cobra defers to the command's own flag.
+func validateShorthands(app *App) error {
+	base := map[string]string{}
+	for _, f := range app.CommonFlags {
+		if f.Short == "" {
+			continue
+		}
+		if prev, ok := base[f.Short]; ok && prev != f.Name {
+			return UsageErrorf("common flags %q and %q share the %q shorthand", prev, f.Name, f.Short)
+		}
+		base[f.Short] = f.Name
+	}
+	var walk func(path string, cmd *Command, shorts map[string]string) error
+	claim := func(path string, flags []Flag, shorts map[string]string) error {
+		for _, f := range flags {
+			if f.Short == "" {
+				continue
+			}
+			if prev, ok := shorts[f.Short]; ok && prev != f.Name {
+				return UsageErrorf("command %q flags %q and %q share the %q shorthand", path, prev, f.Name, f.Short)
+			}
+			shorts[f.Short] = f.Name
+		}
+		return nil
+	}
+	walk = func(path string, cmd *Command, shorts map[string]string) error {
+		surface := map[string]string{}
+		for k, v := range shorts {
+			surface[k] = v
+		}
+		// Persistent flags join the surface every descendant sees; own
+		// flags collide against the surface but do not propagate.
+		if err := claim(path, cmd.PersistentFlags, surface); err != nil {
+			return err
+		}
+		if len(cmd.Subcommands) == 0 {
+			return claim(path, cmd.Flags, surface)
+		}
+		own := map[string]string{}
+		for k, v := range surface {
+			own[k] = v
+		}
+		if err := claim(path, cmd.Flags, own); err != nil {
+			return err
+		}
+		for _, sub := range cmd.Subcommands {
+			if err := walk(path+" "+sub.Name, sub, surface); err != nil {
+				return err
+			}
+		}
+		return nil
+	}
+	for _, cmd := range app.Commands {
+		if err := walk(cmd.Name, cmd, base); err != nil {
+			return err
+		}
+	}
 	return nil
 }
 
@@ -243,6 +308,9 @@ func validateFlags(command string, flags []Flag) error {
 		}
 		if f.Name == "" {
 			return UsageErrorf("command %q has an unnamed flag", command)
+		}
+		if f.Short != "" && len(f.Short) != 1 {
+			return UsageErrorf("command %q flag %q uses shorthand %q, want one letter", command, f.Name, f.Short)
 		}
 		// Cobra's default help flag claims the "h" shorthand on every
 		// command during execute; a declaration using it would panic
