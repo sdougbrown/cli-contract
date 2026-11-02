@@ -1859,6 +1859,16 @@ func TestSuppliedFlags(t *testing.T) {
 		}
 	})
 
+	t.Run("a single-dash common flag reached through a retry", func(t *testing.T) {
+		inv := parse(t, "-format", "json", "job")
+		if _, ok := inv.Supplied["format"]; !ok {
+			t.Error("Supplied[format] is absent, want present after the retry")
+		}
+		if inv.Flags["format"] != "json" {
+			t.Errorf("format = %q, want json", inv.Flags["format"])
+		}
+	})
+
 	t.Run("a duration flag", func(t *testing.T) {
 		inv := parse(t, "job", "--wait", "3s")
 		if _, ok := inv.Supplied["wait"]; !ok {
