@@ -81,10 +81,11 @@ handlers are the same in every implementation, so the expected values in
 
 ## Running the reference suite
 
-The reference runner is the Go library in the parent repository: it walks
-this index, builds each fixture CLI in-process, and asserts every case.
-The next stack stage wires that runner to this index; until it lands,
-these fixtures are the target port authors build against.
+The reference runner is the Go library in the parent repository: the
+`conformance` package walks this index, builds each fixture CLI
+in-process from its declaration, and asserts every case. `go test
+./conformance/` runs the suite; port authors aim to match the fixture
+outputs it produces.
 
 ## Writing a port runner
 
