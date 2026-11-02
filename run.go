@@ -62,10 +62,12 @@ func Run(app *App, adapter Adapter, argv []string, stdout, stderr io.Writer) int
 	result := exec.result
 
 	// A terminating signal exits with its shell code and no stdout output.
-	select {
-	case sig := <-sigCh:
-		return SignalExitCode(sig)
-	default:
+	if !app.HandlerOwnedSignals {
+		select {
+		case sig := <-sigCh:
+			return SignalExitCode(sig)
+		default:
+		}
 	}
 
 	// Test-only crash point: after the result is computed, before the
@@ -73,11 +75,13 @@ func Run(app *App, adapter Adapter, argv []string, stdout, stderr io.Writer) int
 	if seams, ok := adapter.(TestSeams); ok {
 		seams.BeforeWrite()
 	}
-	if seams, ok := adapter.(TestSeams); ok {
-		if sig, ok := seams.PendingSignal(); ok {
-			select {
-			case sigCh <- sig:
-			default:
+	if !app.HandlerOwnedSignals {
+		if seams, ok := adapter.(TestSeams); ok {
+			if sig, ok := seams.PendingSignal(); ok {
+				select {
+				case sigCh <- sig:
+				default:
+				}
 			}
 		}
 	}
@@ -97,10 +101,12 @@ func Run(app *App, adapter Adapter, argv []string, stdout, stderr io.Writer) int
 	}
 	// A signal that arrived during the write still wins on exit code, even
 	// though the envelope may already be written.
-	select {
-	case sig := <-sigCh:
-		return SignalExitCode(sig)
-	default:
+	if !app.HandlerOwnedSignals {
+		select {
+		case sig := <-sigCh:
+			return SignalExitCode(sig)
+		default:
+		}
 	}
 	return adapter.ExitCode(exec.inv, result, exec.handlerErr)
 }
