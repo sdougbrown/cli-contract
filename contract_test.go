@@ -10,6 +10,7 @@ import (
 	"strings"
 	"syscall"
 	"testing"
+	"time"
 )
 
 // testAdapter mirrors an envelope-style app: one JSON result on stdout,
@@ -665,5 +666,45 @@ func TestHandlerOwnedSignals(t *testing.T) {
 	code, _, _ := runApp(t, app, adapter, "reconcile", "u")
 	if code != 0 {
 		t.Fatalf("exit code = %d, want 0: the handler owns signals", code)
+	}
+}
+
+func TestDeclaredDefaultsApplyAtParse(t *testing.T) {
+	app := &App{
+		Name:    "t",
+		Version: "v1",
+		Commands: []*Command{
+			{
+				Name:  "job",
+				Short: "run a job",
+				Flags: []Flag{
+					{Name: "retries", Kind: Int, Usage: "retry attempts", Default: 16},
+					{Name: "wait", Kind: Duration, Usage: "how long", Default: 90 * time.Second},
+				},
+				Handle: func(ctx context.Context, inv Invocation, _ io.Writer) (any, error) {
+					return map[string]any{"retries": inv.Ints["retries"], "wait": inv.Durations["wait"].String()}, nil
+				},
+			},
+		},
+	}
+
+	// Absent flags yield the declared default.
+	code, stdout, _ := runApp(t, app, &testAdapter{}, "job")
+	if code != 0 {
+		t.Fatalf("exit = %d", code)
+	}
+	env := jsonField(t, stdout)
+	if env["retries"] != float64(16) || env["wait"] != "1m30s" {
+		t.Errorf("env = %v, want declared defaults", env)
+	}
+
+	// An explicitly-passed zero passes through as zero.
+	code, stdout, _ = runApp(t, app, &testAdapter{}, "job", "--retries=0", "--wait=0s")
+	if code != 0 {
+		t.Fatalf("exit = %d", code)
+	}
+	env = jsonField(t, stdout)
+	if env["retries"] != float64(0) || env["wait"] != "0s" {
+		t.Errorf("env = %v, want explicit zeros", env)
 	}
 }
