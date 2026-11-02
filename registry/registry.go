@@ -64,16 +64,19 @@ func Manifest(app *clicontract.App, opts Options) ([]byte, error) {
 		timeout = DefaultTimeout
 	}
 	tools := map[string]toolShape{}
-	for _, cmd := range app.Commands {
+	var walk func(path []string, cmd *clicontract.Command)
+	walk = func(path []string, cmd *clicontract.Command) {
 		if len(cmd.Subcommands) > 0 {
 			for _, sub := range cmd.Subcommands {
-				tools[toolName(app.Name, cmd.Name+"-"+sub.Name)] = buildTool(
-					opts, timeout, app.Name, []string{cmd.Name, sub.Name}, sub, app.CommonFlags)
+				walk(append(path, sub.Name), sub)
 			}
-			continue
+			return
 		}
-		tools[toolName(app.Name, cmd.Name)] = buildTool(
-			opts, timeout, app.Name, []string{cmd.Name}, cmd, app.CommonFlags)
+		tools[toolName(app.Name, strings.Join(path, "-"))] = buildTool(
+			opts, timeout, app.Name, path, cmd, app.CommonFlags)
+	}
+	for _, cmd := range app.Commands {
+		walk([]string{cmd.Name}, cmd)
 	}
 	for name, t := range tools {
 		bindings := t.Bindings

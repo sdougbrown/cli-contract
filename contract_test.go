@@ -764,3 +764,87 @@ func TestSubcommandPositionals(t *testing.T) {
 		t.Errorf("exit = %d, want 2 for stop with an argument", code)
 	}
 }
+
+func TestDeepNesting(t *testing.T) {
+	app := &App{
+		Name:    "t",
+		Version: "v1",
+		Commands: []*Command{
+			{
+				Name:  "wf",
+				Short: "workflow root",
+				PersistentFlags: []Flag{
+					{Name: "socket", Kind: String, Usage: "socket path"},
+				},
+				Subcommands: []*Command{
+					{
+						Name:  "ctl",
+						Short: "controller group",
+						PersistentFlags: []Flag{
+							{Name: "scope", Kind: String, Usage: "scope for controller verbs"},
+						},
+						Subcommands: []*Command{
+							{
+								Name:  "enable",
+								Short: "enable one controller",
+								Positionals: []Positional{
+									{Name: "id", Required: true},
+								},
+								Handle: func(ctx context.Context, inv Invocation, _ io.Writer) (any, error) {
+									return map[string]any{
+										"socket": inv.Flags["socket"],
+										"scope":  inv.Flags["scope"],
+										"id":     inv.Args[0],
+										"path":   inv.Path,
+									}, nil
+								},
+							},
+						},
+					},
+					{
+						Name:        "status",
+						Short:       "flat subcommand still works",
+						Positionals: []Positional{{Name: "id", Required: true}},
+						Handle: func(ctx context.Context, inv Invocation, _ io.Writer) (any, error) {
+							return map[string]any{"sub": inv.Sub, "path": inv.Path}, nil
+						},
+					},
+				},
+			},
+		},
+	}
+
+	// Three levels deep: persistent flags from both ancestors, positional
+	// validation on the leaf, and the full path on the invocation.
+	code, stdout, stderr := runApp(t, app, &testAdapter{},
+		"wf", "--socket", "/s", "ctl", "--scope", "all", "enable", "ctrl_1")
+	if code != 0 {
+		t.Fatalf("exit = %d, stderr: %s", code, stderr)
+	}
+	env := jsonField(t, stdout)
+	if env["socket"] != "/s" || env["scope"] != "all" || env["id"] != "ctrl_1" {
+		t.Errorf("env = %v", env)
+	}
+	path := env["path"].([]any)
+	if len(path) != 2 || path[0] != "ctl" || path[1] != "enable" {
+		t.Errorf("path = %v, want [ctl enable]", path)
+	}
+
+	// The two-level shape is unchanged: Sub names the first nested level.
+	code, stdout, _ = runApp(t, app, &testAdapter{}, "wf", "--socket", "/s", "status", "wf_1")
+	if code != 0 {
+		t.Fatalf("exit = %d", code)
+	}
+	env = jsonField(t, stdout)
+	if env["sub"] != "status" {
+		t.Errorf("sub = %v, want status", env["sub"])
+	}
+
+	// Bare inner node and unknown leaf are caller errors.
+	if code, _, _ := runApp(t, app, &testAdapter{}, "wf", "--socket", "/s", "ctl"); code != 2 {
+		t.Errorf("bare ctl: exit = %d, want 2", code)
+	}
+	if code, _, _ := runApp(t, app, &testAdapter{}, "wf", "--socket", "/s", "ctl", "bogus"); code != 2 {
+		t.Errorf("unknown leaf: exit = %d, want 2", code)
+	}
+}

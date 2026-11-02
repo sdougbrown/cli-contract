@@ -71,6 +71,10 @@ type Invocation struct {
 	// Sub is the nested subcommand for commands that have one; empty
 	// otherwise.
 	Sub string
+	// Path holds the nested command names below the root command, leaf
+	// included ("controller", "status" for `app workflow controller
+	// status`). Nil for top-level commands.
+	Path []string
 	// Args holds the positional values in declaration order.
 	Args []string
 	// Flags holds single-valued flag values by name; absent flags are "".
@@ -182,13 +186,7 @@ func validate(app *App) error {
 			return err
 		}
 		for _, sub := range cmd.Subcommands {
-			if sub.Short == "" {
-				return UsageErrorf("command %q subcommand %q has no help short", cmd.Name, sub.Name)
-			}
-			if (sub.Handle == nil) == (sub.Raw == nil) {
-				return UsageErrorf("command %q subcommand %q must declare exactly one of Handle or Raw", cmd.Name, sub.Name)
-			}
-			if err := validateFlags(cmd.Name+" "+sub.Name, sub.Flags); err != nil {
+			if err := validateNested(cmd.Name, sub); err != nil {
 				return err
 			}
 		}
@@ -197,6 +195,27 @@ func validate(app *App) error {
 }
 
 // validateFlags checks one flag list: named, known kind, and a usage string.
+// validateNested checks one nested node recursively: help text everywhere,
+// and exactly one of Handle or Raw on leaves only.
+func validateNested(parent string, sub *Command) error {
+	path := parent + " " + sub.Name
+	if sub.Short == "" {
+		return UsageErrorf("command %q has no help short", path)
+	}
+	if len(sub.Subcommands) > 0 {
+		for _, inner := range sub.Subcommands {
+			if err := validateNested(sub.Name, inner); err != nil {
+				return err
+			}
+		}
+		return nil
+	}
+	if (sub.Handle == nil) == (sub.Raw == nil) {
+		return UsageErrorf("command %q must declare exactly one of Handle or Raw", path)
+	}
+	return validateFlags(path, sub.Flags)
+}
+
 func validateFlags(command string, flags []Flag) error {
 	for _, f := range flags {
 		switch f.Kind {

@@ -160,7 +160,9 @@ func noArgs(name string) cobra.PositionalArgs {
 }
 
 // invocationFrom builds the Invocation from one parsed cobra command.
-func invocationFrom(cmd *cobra.Command, c *Command, parent *Command, args []string, common []Flag) (Invocation, error) {
+// ancestors carries the chain of declaring commands from the root parent
+// down to the immediate parent; nil for top-level commands.
+func invocationFrom(cmd *cobra.Command, c *Command, ancestors []*Command, args []string, common []Flag) (Invocation, error) {
 	inv := Invocation{
 		Sub:       c.Name,
 		Args:      args, // validated by positionalArgs
@@ -169,11 +171,18 @@ func invocationFrom(cmd *cobra.Command, c *Command, parent *Command, args []stri
 		Ints:      map[string]int{},
 		Durations: map[string]time.Duration{},
 	}
-	if parent != nil {
-		inv.Command = parent.Name
+	if len(ancestors) > 0 {
+		inv.Command = ancestors[0].Name
+		if len(ancestors) > 1 {
+			inv.Sub = ancestors[1].Name
+		} else {
+			inv.Sub = c.Name
+		}
+		inv.Path = append(commandNames(ancestors[1:]), c.Name)
 	} else {
 		inv.Command = c.Name
 		inv.Sub = ""
+		inv.Path = nil
 	}
 	fs := cmd.Flags()
 	read := func(f Flag) error {
@@ -224,8 +233,8 @@ func invocationFrom(cmd *cobra.Command, c *Command, parent *Command, args []stri
 			return Invocation{}, err
 		}
 	}
-	if parent != nil {
-		for _, f := range parent.PersistentFlags {
+	for _, ancestor := range ancestors {
+		for _, f := range ancestor.PersistentFlags {
 			if err := read(f); err != nil {
 				return Invocation{}, err
 			}
@@ -236,9 +245,11 @@ func invocationFrom(cmd *cobra.Command, c *Command, parent *Command, args []stri
 
 // dispatchRunE builds the RunE shared by dispatching commands: capture the
 // Invocation, and in dispatch mode run the handler and record the result.
-func dispatchRunE(exec *execution, runHandlers bool, c *Command, parent *Command, common []Flag) func(*cobra.Command, []string) error {
+// ancestors carries the chain of declaring commands from the root parent
+// down; a top-level command's chain is empty.
+func dispatchRunE(exec *execution, runHandlers bool, c *Command, ancestors []*Command, common []Flag) func(*cobra.Command, []string) error {
 	return func(cmd *cobra.Command, args []string) error {
-		inv, err := invocationFrom(cmd, c, parent, args, common)
+		inv, err := invocationFrom(cmd, c, ancestors, args, common)
 		if err != nil {
 			return err
 		}
@@ -257,9 +268,9 @@ func dispatchRunE(exec *execution, runHandlers bool, c *Command, parent *Command
 }
 
 // rawRunE builds the RunE for raw-output commands.
-func rawRunE(exec *execution, runHandlers bool, c *Command, common []Flag) func(*cobra.Command, []string) error {
+func rawRunE(exec *execution, runHandlers bool, c *Command, ancestors []*Command, common []Flag) func(*cobra.Command, []string) error {
 	return func(cmd *cobra.Command, args []string) error {
-		inv, err := invocationFrom(cmd, c, nil, args, common)
+		inv, err := invocationFrom(cmd, c, ancestors, args, common)
 		if err != nil {
 			return err
 		}
@@ -351,7 +362,7 @@ func (a *App) buildTree(exec *execution, runHandlers bool) *cobra.Command {
 		}
 		var runE func(*cobra.Command, []string) error
 		if c.Raw != nil {
-			runE = rawRunE(exec, runHandlers, c, a.CommonFlags)
+			runE = rawRunE(exec, runHandlers, c, nil, a.CommonFlags)
 		} else {
 			runE = dispatchRunE(exec, runHandlers, c, nil, a.CommonFlags)
 		}
@@ -385,7 +396,8 @@ func (a *App) pathOf(root *cobra.Command, c *cobra.Command) string {
 	return name
 }
 
-// buildSubTree builds a command that owns nested subcommands.
+// buildSubTree builds a command that owns nested subcommands. Nesting is
+// recursive: a subcommand with its own Subcommands becomes an inner node.
 func (a *App) buildSubTree(exec *execution, runHandlers bool, c *Command) *cobra.Command {
 	parent := &cobra.Command{
 		Use:   commandUse(c),
@@ -401,17 +413,53 @@ func (a *App) buildSubTree(exec *execution, runHandlers bool, c *Command) *cobra
 	}
 	addFlags(parent.PersistentFlags(), c.PersistentFlags)
 	for _, sub := range c.Subcommands {
-		subCmd := &cobra.Command{
-			Use:   sub.Name,
-			Short: sub.Short,
-			Long:  sub.Long,
-			Args:  a.positionalArgs(c.Name+" "+sub.Name, sub),
-			RunE:  dispatchRunE(exec, runHandlers, sub, c, a.CommonFlags),
-		}
-		addFlags(subCmd.Flags(), sub.Flags)
-		parent.AddCommand(subCmd)
+		parent.AddCommand(a.buildNested(exec, runHandlers, []*Command{c}, sub))
 	}
 	return parent
+}
+
+// buildNested builds one nested node: an inner node when it owns
+// subcommands, otherwise a dispatching leaf. ancestors is the chain of
+// declaring commands from the root parent down to the immediate parent.
+func (a *App) buildNested(exec *execution, runHandlers bool, ancestors []*Command, c *Command) *cobra.Command {
+	path := strings.Join(append(commandNames(ancestors), c.Name), " ")
+	if len(c.Subcommands) > 0 {
+		node := &cobra.Command{
+			Use:   commandUse(c),
+			Short: c.Short,
+			Long:  c.Long,
+			RunE: func(cmd *cobra.Command, args []string) error {
+				quoted := make([]string, len(c.Subcommands))
+				for i, sub := range c.Subcommands {
+					quoted[i] = fmt.Sprintf("%q", sub.Name)
+				}
+				return UsageErrorf("%s requires a subcommand: %s", path, strings.Join(quoted, " or "))
+			},
+		}
+		addFlags(node.PersistentFlags(), c.PersistentFlags)
+		for _, sub := range c.Subcommands {
+			node.AddCommand(a.buildNested(exec, runHandlers, append(ancestors, c), sub))
+		}
+		return node
+	}
+	subCmd := &cobra.Command{
+		Use:   commandUse(c),
+		Short: c.Short,
+		Long:  c.Long,
+		Args:  a.positionalArgs(path, c),
+		RunE:  dispatchRunE(exec, runHandlers, c, ancestors, a.CommonFlags),
+	}
+	addFlags(subCmd.Flags(), c.Flags)
+	return subCmd
+}
+
+// commandNames extracts the names of one ancestor chain.
+func commandNames(cmds []*Command) []string {
+	names := make([]string, len(cmds))
+	for i, c := range cmds {
+		names[i] = c.Name
+	}
+	return names
 }
 
 // Tree builds the cobra command tree without an adapter: for tests and
