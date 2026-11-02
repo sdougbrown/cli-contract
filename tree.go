@@ -111,7 +111,9 @@ func asUsageError(err error) error {
 	return &UsageError{Message: err.Error()}
 }
 
-// addFlags registers one command's flags on a flag set.
+// addFlags registers one command's flags on a flag set. Typed defaults from
+// the declaration become the parse defaults: an absent flag yields the
+// documented default, and an explicitly-passed zero passes through as zero.
 func addFlags(fs *pflag.FlagSet, flags []Flag) {
 	for _, f := range flags {
 		switch f.Kind {
@@ -124,9 +126,23 @@ func addFlags(fs *pflag.FlagSet, flags []Flag) {
 		case Repeat:
 			fs.StringArray(f.Name, nil, f.Usage)
 		case Int:
-			fs.Int(f.Name, 0, f.Usage)
+			def := 0
+			if v, ok := f.Default.(int); ok {
+				def = v
+			}
+			fs.Int(f.Name, def, f.Usage)
 		case Duration:
-			fs.Duration(f.Name, 0, f.Usage)
+			def := time.Duration(0)
+			if v, ok := f.Default.(time.Duration); ok {
+				def = v
+			}
+			fs.Duration(f.Name, def, f.Usage)
+		case String:
+			def := ""
+			if v, ok := f.Default.(string); ok {
+				def = v
+			}
+			fs.String(f.Name, def, f.Usage)
 		default:
 			fs.String(f.Name, "", f.Usage)
 		}
@@ -389,7 +405,7 @@ func (a *App) buildSubTree(exec *execution, runHandlers bool, c *Command) *cobra
 			Use:   sub.Name,
 			Short: sub.Short,
 			Long:  sub.Long,
-			Args:  noArgs(c.Name + " " + sub.Name),
+			Args:  a.positionalArgs(c.Name+" "+sub.Name, sub),
 			RunE:  dispatchRunE(exec, runHandlers, sub, c, a.CommonFlags),
 		}
 		addFlags(subCmd.Flags(), sub.Flags)

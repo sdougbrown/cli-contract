@@ -10,6 +10,7 @@ import (
 	"strings"
 	"syscall"
 	"testing"
+	"time"
 )
 
 // testAdapter mirrors an envelope-style app: one JSON result on stdout,
@@ -665,5 +666,101 @@ func TestHandlerOwnedSignals(t *testing.T) {
 	code, _, _ := runApp(t, app, adapter, "reconcile", "u")
 	if code != 0 {
 		t.Fatalf("exit code = %d, want 0: the handler owns signals", code)
+	}
+}
+
+func TestDeclaredDefaultsApplyAtParse(t *testing.T) {
+	app := &App{
+		Name:    "t",
+		Version: "v1",
+		Commands: []*Command{
+			{
+				Name:  "job",
+				Short: "run a job",
+				Flags: []Flag{
+					{Name: "retries", Kind: Int, Usage: "retry attempts", Default: 16},
+					{Name: "wait", Kind: Duration, Usage: "how long", Default: 90 * time.Second},
+				},
+				Handle: func(ctx context.Context, inv Invocation, _ io.Writer) (any, error) {
+					return map[string]any{"retries": inv.Ints["retries"], "wait": inv.Durations["wait"].String()}, nil
+				},
+			},
+		},
+	}
+
+	// Absent flags yield the declared default.
+	code, stdout, _ := runApp(t, app, &testAdapter{}, "job")
+	if code != 0 {
+		t.Fatalf("exit = %d", code)
+	}
+	env := jsonField(t, stdout)
+	if env["retries"] != float64(16) || env["wait"] != "1m30s" {
+		t.Errorf("env = %v, want declared defaults", env)
+	}
+
+	// An explicitly-passed zero passes through as zero.
+	code, stdout, _ = runApp(t, app, &testAdapter{}, "job", "--retries=0", "--wait=0s")
+	if code != 0 {
+		t.Fatalf("exit = %d", code)
+	}
+	env = jsonField(t, stdout)
+	if env["retries"] != float64(0) || env["wait"] != "0s" {
+		t.Errorf("env = %v, want explicit zeros", env)
+	}
+}
+
+func TestSubcommandPositionals(t *testing.T) {
+	app := &App{
+		Name:    "t",
+		Version: "v1",
+		Commands: []*Command{
+			{
+				Name:  "ctl",
+				Short: "parent",
+				PersistentFlags: []Flag{
+					{Name: "socket", Kind: String, Usage: "socket path"},
+				},
+				Subcommands: []*Command{
+					{
+						Name:  "show",
+						Short: "show one runtime",
+						Positionals: []Positional{
+							{Name: "runtime-id"},
+							{Name: "detail"},
+						},
+						Handle: func(ctx context.Context, inv Invocation, _ io.Writer) (any, error) {
+							return map[string]any{"args": inv.Args}, nil
+						},
+					},
+					{
+						Name:  "stop",
+						Short: "no positionals",
+						Handle: func(ctx context.Context, inv Invocation, _ io.Writer) (any, error) {
+							return map[string]any{}, nil
+						},
+					},
+				},
+			},
+		},
+	}
+	// Declared positionals (required and optional) pass validation.
+	code, stdout, stderr := runApp(t, app, &testAdapter{}, "ctl", "--socket", "/s", "show", "rt_1", "extra")
+	if code != 0 {
+		t.Fatalf("exit = %d, stderr: %s", code, stderr)
+	}
+	env := jsonField(t, stdout)
+	args := env["args"].([]any)
+	if len(args) != 2 || args[0] != "rt_1" || args[1] != "extra" {
+		t.Errorf("args = %v, want [rt_1 extra]", args)
+	}
+
+	// Beyond the declaration is still a caller error.
+	if code, _, _ := runApp(t, app, &testAdapter{}, "ctl", "--socket", "/s", "show", "a", "b", "c"); code != 2 {
+		t.Errorf("exit = %d, want 2 for an extra positional", code)
+	}
+
+	// A subcommand with no positionals still rejects arguments.
+	if code, _, _ := runApp(t, app, &testAdapter{}, "ctl", "--socket", "/s", "stop", "x"); code != 2 {
+		t.Errorf("exit = %d, want 2 for stop with an argument", code)
 	}
 }
