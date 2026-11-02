@@ -87,6 +87,11 @@ type Invocation struct {
 	Ints map[string]int
 	// Durations holds duration flag values by name; absent flags are 0.
 	Durations map[string]time.Duration
+	// Supplied marks the flags given on the command line (pflag's
+	// Changed): an omitted flag — even one with a declared default — is
+	// absent from the map. Covers every kind, including inherited
+	// persistent and common flags.
+	Supplied map[string]bool
 }
 
 // HandleFunc runs one parsed command invocation. The returned result is
@@ -228,6 +233,11 @@ func validateFlags(command string, flags []Flag) error {
 		}
 		if f.Name == "" {
 			return UsageErrorf("command %q has an unnamed flag", command)
+		}
+		// Cobra's default help flag claims the "h" shorthand on every
+		// command during execute; a declaration using it would panic there.
+		if f.Short == "h" {
+			return UsageErrorf("command %q flag %q uses shorthand %q, reserved for the help flag", command, f.Name, f.Short)
 		}
 	}
 	return nil

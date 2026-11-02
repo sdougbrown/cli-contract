@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"slices"
 	"strings"
 	"syscall"
 	"time"
@@ -170,6 +171,7 @@ func invocationFrom(cmd *cobra.Command, c *Command, ancestors []*Command, args [
 		Bools:     map[string]bool{},
 		Ints:      map[string]int{},
 		Durations: map[string]time.Duration{},
+		Supplied:  map[string]bool{},
 	}
 	if len(ancestors) > 0 {
 		inv.Command = ancestors[0].Name
@@ -186,6 +188,10 @@ func invocationFrom(cmd *cobra.Command, c *Command, ancestors []*Command, args [
 	}
 	fs := cmd.Flags()
 	read := func(f Flag) error {
+		// Supplied is pflag's Changed, recorded where the value is read:
+		// every kind, and inherited persistent flags parsed at this
+		// command, land in the same map.
+		inv.Supplied[f.Name] = fs.Changed(f.Name)
 		switch f.Kind {
 		case Bool:
 			b, err := fs.GetBool(f.Name)
@@ -376,10 +382,6 @@ func (a *App) buildTree(exec *execution, runHandlers bool) *cobra.Command {
 		}
 		if c.NoInterspersed {
 			cmd.Flags().SetInterspersed(false)
-			if cmd.Annotations == nil {
-				cmd.Annotations = map[string]string{}
-			}
-			cmd.Annotations[noInterspersedAnnotation] = "true"
 		}
 		addFlags(cmd.Flags(), c.Flags)
 		root.AddCommand(cmd)
@@ -453,6 +455,9 @@ func (a *App) buildNested(exec *execution, runHandlers bool, ancestors []*Comman
 		Args:  a.positionalArgs(path, c),
 		RunE:  dispatchRunE(exec, runHandlers, c, ancestors, a.CommonFlags),
 	}
+	if c.NoInterspersed {
+		subCmd.Flags().SetInterspersed(false)
+	}
 	addFlags(subCmd.Flags(), c.Flags)
 	return subCmd
 }
@@ -466,34 +471,115 @@ func commandNames(cmds []*Command) []string {
 	return names
 }
 
-// noInterspersedAnnotation marks a cobra command declared with
-// NoInterspersed: flag parsing stops at the first positional, so later
-// tokens are positionals even when they look like flags.
-const noInterspersedAnnotation = "clicontract-no-interspersed"
+// declaredPath returns the resolved command's cobra names below the root:
+// ["remote", "list"] for `app remote list`, nil for the root itself.
+func declaredPath(root, cmd *cobra.Command) []string {
+	var names []string
+	for c := cmd; c != root; c = c.Parent() {
+		if c == nil {
+			return nil
+		}
+		names = append([]string{c.Name()}, names...)
+	}
+	return names
+}
+
+// declaredCommand resolves the declared *Command for one cobra command path,
+// or nil when no declaration matches (cobra's own help command, unknown
+// names). NoInterspersed and other per-declaration settings read from here.
+func (a *App) declaredCommand(names []string) *Command {
+	var cur *Command
+	for i, name := range names {
+		children := a.Commands
+		if i > 0 {
+			children = cur.Subcommands
+		}
+		var next *Command
+		for _, c := range children {
+			if c.Name == name {
+				next = c
+				break
+			}
+		}
+		if next == nil {
+			return nil
+		}
+		cur = next
+	}
+	return cur
+}
 
 // normalizeArgv rewrites single-dash long flags to their double-dash form
 // before cobra parses: pflag reads a token like -agent as the shorthand
 // cluster -a -g -e -n -t, so callers used to the standard flag package's
 // -agent, -agent=x and -agent x forms would fail. A token is rewritten
 // only when its name is longer than one character and is a declared long
-// flag of the command Find resolves — the command's own flags, inherited
-// persistent flags, and cobra's help and version flags. Everything else
+// flag of the resolved command — the command's own flags, inherited
+// persistent and common flags, and cobra's help and version flags, which
+// are treated as declared without being registered early. Everything else
 // passes through for pflag to handle: tokens after a bare --, value tokens
 // that follow a value-taking flag, undeclared names such as -bogus, and
 // shorthand clusters like -vf, which are never read as long names.
+//
+// A nil argv stays nil: cobra falls back to os.Args when a command's args
+// are nil, and Run keeps that convention for a nil argv.
 func (a *App) normalizeArgv(root *cobra.Command, argv []string) []string {
+	if argv == nil {
+		return nil
+	}
 	out := make([]string, len(argv))
 	copy(out, argv)
-	cmd, _, err := root.Find(argv)
-	if err != nil || cmd == nil {
-		return out
+	// Rewriting a flag that sits before a subcommand name changes what
+	// cobra's stripFlags consumes during Find, so resolve and rewrite
+	// again until nothing changes; the rewrite only ever turns single-dash
+	// tokens into double-dash ones, so this terminates.
+	for range len(argv) + 1 {
+		cmd, _, _ := root.Find(out)
+		if cmd == nil {
+			return out
+		}
+		// Cobra merges persistent and inherited flags into a command's
+		// flag set lazily during execute; the rewrite needs the same view
+		// of declared flags that parsing will see.
+		cmd.LocalFlags()
+		next := a.rewriteArgv(root, cmd, out)
+		if slices.Equal(next, out) {
+			return next
+		}
+		out = next
 	}
-	// cobra declares the help and version flags lazily during execute;
-	// declaring them here lets -help and -version normalize the same way.
-	cmd.InitDefaultHelpFlag()
-	cmd.InitDefaultVersionFlag()
-	flags := cmd.Flags()
+	return out
+}
 
+// rewriteArgv rewrites one argv pass for the resolved command. The resolved
+// command's names mark where the command path ends in argv: only tokens
+// after it count as positionals, so a NoInterspersed command stops rewriting
+// at its first positional without treating its own name as one.
+func (a *App) rewriteArgv(root, cmd *cobra.Command, argv []string) []string {
+	out := make([]string, len(argv))
+	copy(out, argv)
+	flags := cmd.Flags()
+	// Cobra declares the help flag on every command and the version flag
+	// on the root during execute; the rewrite treats those names as
+	// declared bools without registering anything early. A flag the app
+	// declares under the same name decides instead, since cobra defers
+	// to it and skips its own.
+	declaredBool := func(name string) bool {
+		if flags.Lookup(name) != nil {
+			return false
+		}
+		return name == "help" || (name == "version" && cmd == root && a.Version != "")
+	}
+	// noInterspersed comes from the declaration that matches the resolved
+	// path, so nested commands honor it like top-level ones.
+	chain := declaredPath(root, cmd)
+	declared := a.declaredCommand(chain)
+	noInterspersed := declared != nil && declared.NoInterspersed
+
+	// pathNext walks the resolved command names; cmdEnd is the first argv
+	// index past the command path, where positionals begin.
+	pathNext := 0
+	cmdEnd := 0
 	// valueNext marks that pflag reads the next token as the current
 	// flag's value, so that token is never rewritten.
 	valueNext := false
@@ -513,14 +599,17 @@ func (a *App) normalizeArgv(root *cobra.Command, argv []string) []string {
 			return out
 		case strings.HasPrefix(arg, "--"):
 			name, _, hasValue := strings.Cut(arg[2:], "=")
-			if f := flags.Lookup(name); f != nil && f.NoOptDefVal == "" && !hasValue {
-				valueNext = true
+			if !hasValue {
+				if f := flags.Lookup(name); f != nil && f.NoOptDefVal == "" {
+					valueNext = true
+				}
 			}
 		case strings.HasPrefix(arg, "-") && len(arg) > 1:
 			name, _, hasValue := strings.Cut(arg[1:], "=")
-			if f := flags.Lookup(name); f != nil && len(name) > 1 {
+			f := flags.Lookup(name)
+			if len(name) > 1 && (f != nil || declaredBool(name)) {
 				out[i] = "-" + arg // -name and -name=value become --name and --name=value
-				if !hasValue && f.NoOptDefVal == "" {
+				if !hasValue && f != nil && f.NoOptDefVal == "" {
 					valueNext = true
 				}
 				continue
@@ -529,7 +618,10 @@ func (a *App) normalizeArgv(root *cobra.Command, argv []string) []string {
 				valueNext = true
 			}
 		default:
-			if cmd.Annotations[noInterspersedAnnotation] == "true" {
+			if pathNext < len(chain) && arg == chain[pathNext] {
+				pathNext++
+				cmdEnd = i + 1
+			} else if i >= cmdEnd && noInterspersed {
 				stop = true
 			}
 		}

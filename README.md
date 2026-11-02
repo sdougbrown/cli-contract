@@ -73,7 +73,11 @@ through untouched: shorthand clusters like `-vf` still parse as shorthands,
 undeclared `-bogus` is still a caller error, a token that follows a
 value-taking flag is that flag's value, tokens after a bare `--` are never
 rewritten, and `NoInterspersed` commands keep everything after the first
-positional as positionals.
+positional as positionals. A single-dash token that spells a declared long
+flag is read as that flag, even when its letters are also bool shorthands:
+with `-v` and `-b` declared plus a long `vb`, `-vb x` sets `vb` to `x` — the
+long name wins. Positionals that may start with `-` belong after `--`, as
+they already did for `--name`.
 
 ## Adapter
 
