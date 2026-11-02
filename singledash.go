@@ -62,7 +62,7 @@ func (a *App) retryArgv(exec *execution, root *cobra.Command, argv []string) []s
 	if failing == nil {
 		return nil
 	}
-	return rewriteSingleDash(a, failing, argv)
+	return rewriteSingleDash(exec, failing, argv)
 }
 
 // isUnknownFlagErr reports whether the flag-parse error is pflag's
@@ -98,13 +98,14 @@ func isUnknownFlagErr(err error) bool {
 // "--" ends the flags. Value tokens and positionals are never rewritten,
 // and a token whose shorthand reading resolves keeps that meaning — a
 // single-dash long flag is only tried when the shorthand reading fails.
-func rewriteSingleDash(a *App, cmd *cobra.Command, argv []string) []string {
+func rewriteSingleDash(exec *execution, cmd *cobra.Command, argv []string) []string {
 	if len(argv) == 0 {
 		return nil
 	}
 	fs := cmd.Flags()
-	path := cobraPath(cmd)
+	path := commandPath(cmd)
 	group := cmd.HasSubCommands()
+	noInterspersed := exec.noInterspersed(cmd)
 	rewritten := make([]string, len(argv))
 	copy(rewritten, argv)
 	changed := false
@@ -161,7 +162,7 @@ func rewriteSingleDash(a *App, cmd *cobra.Command, argv []string) []string {
 				// swallowed out of the leaf's own command name.
 				return rewrittenArgv(rewritten, changed)
 			}
-			if a.declaredNoInterspersed(path) {
+			if noInterspersed {
 				// NoInterspersed, with the command path already
 				// complete: the first positional ends the flags for
 				// this command.
@@ -210,39 +211,10 @@ func shorthandRead(fs *pflag.FlagSet, rest string) (consumesNext, resolves bool)
 	return false, true
 }
 
-// cobraPath is cmd's command path below the root: the names a resolved
-// command contributes to argv ("remote list" for the list leaf).
-func cobraPath(cmd *cobra.Command) []string {
-	var path []string
-	for c := cmd; c.Parent() != nil; c = c.Parent() {
-		path = append(path, c.Name())
-	}
-	for i, j := 0, len(path)-1; i < j; i, j = i+1, j-1 {
-		path[i], path[j] = path[j], path[i]
-	}
-	return path
-}
-
-// declaredNoInterspersed reports whether the declared command at path is
-// a leaf declared NoInterspersed — the nodes whose cobra flag set parses
-// without interspersing.
-func (a *App) declaredNoInterspersed(path []string) bool {
-	if len(path) == 0 {
-		return false
-	}
-	cmds := a.Commands
-	var c *Command
-	for _, name := range path {
-		found := false
-		for _, candidate := range cmds {
-			if candidate.Name == name {
-				c, cmds, found = candidate, candidate.Subcommands, true
-				break
-			}
-		}
-		if !found {
-			return false
-		}
-	}
-	return c != nil && len(c.Subcommands) == 0 && c.NoInterspersed
+// noInterspersed reports whether cmd's flag set stops parsing flags at the
+// first positional. The builder applies the declared property to a leaf's
+// own flag set only, so a command owning subcommands never stops.
+func (exec *execution) noInterspersed(cmd *cobra.Command) bool {
+	c := exec.declared[cmd]
+	return c != nil && c.NoInterspersed && !cmd.HasSubCommands()
 }

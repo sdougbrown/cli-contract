@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"slices"
 	"strings"
 	"syscall"
 	"time"
@@ -105,6 +106,11 @@ type execution struct {
 	// flag produces.
 	flagErr    error
 	flagErrCmd *cobra.Command
+	// declared maps each cobra command of the last built tree to the
+	// declared Command it was built from: the properties the builder
+	// applied to a command are read back from the declaration that
+	// produced it. Rebuilt with every tree.
+	declared map[*cobra.Command]*Command
 }
 
 // asUsageError guarantees the usage classification for every dispatch-level
@@ -393,6 +399,7 @@ func (a *App) buildTree(exec *execution, runHandlers bool) *cobra.Command {
 	})
 	addFlags(root.PersistentFlags(), a.CommonFlags)
 
+	exec.declared = make(map[*cobra.Command]*Command, len(a.Commands))
 	for _, c := range a.Commands {
 		if len(c.Subcommands) > 0 {
 			root.AddCommand(a.buildSubTree(exec, runHandlers, c))
@@ -412,6 +419,7 @@ func (a *App) buildTree(exec *execution, runHandlers bool) *cobra.Command {
 			Args:  args,
 			RunE:  runE,
 		}
+		exec.declared[cmd] = c
 		if c.NoInterspersed {
 			cmd.Flags().SetInterspersed(false)
 		}
@@ -427,11 +435,19 @@ func (a *App) pathOf(root *cobra.Command, c *cobra.Command) string {
 	if c == root {
 		return a.Name
 	}
-	name := c.Name()
-	for p := c.Parent(); p != nil && p != root; p = p.Parent() {
-		name = p.Name() + " " + name
+	return strings.Join(commandPath(c), " ")
+}
+
+// commandPath is the names a resolved command contributes to argv: its own
+// name and its ancestors' below the root ("remote list" for the list
+// leaf).
+func commandPath(cmd *cobra.Command) []string {
+	var path []string
+	for c := cmd; c.Parent() != nil; c = c.Parent() {
+		path = append(path, c.Name())
 	}
-	return name
+	slices.Reverse(path)
+	return path
 }
 
 // buildSubTree builds a command that owns nested subcommands. Nesting is
@@ -449,6 +465,7 @@ func (a *App) buildSubTree(exec *execution, runHandlers bool, c *Command) *cobra
 			return UsageErrorf("%s requires a subcommand: %s", c.Name, strings.Join(quoted, " or "))
 		},
 	}
+	exec.declared[parent] = c
 	addFlags(parent.PersistentFlags(), c.PersistentFlags)
 	for _, sub := range c.Subcommands {
 		parent.AddCommand(a.buildNested(exec, runHandlers, []*Command{c}, sub))
@@ -474,6 +491,7 @@ func (a *App) buildNested(exec *execution, runHandlers bool, ancestors []*Comman
 				return UsageErrorf("%s requires a subcommand: %s", path, strings.Join(quoted, " or "))
 			},
 		}
+		exec.declared[node] = c
 		addFlags(node.PersistentFlags(), c.PersistentFlags)
 		for _, sub := range c.Subcommands {
 			node.AddCommand(a.buildNested(exec, runHandlers, append(ancestors, c), sub))
@@ -487,6 +505,7 @@ func (a *App) buildNested(exec *execution, runHandlers bool, ancestors []*Comman
 		Args:  a.positionalArgs(path, c),
 		RunE:  dispatchRunE(exec, runHandlers, c, ancestors, a.CommonFlags),
 	}
+	exec.declared[subCmd] = c
 	if c.NoInterspersed {
 		subCmd.Flags().SetInterspersed(false)
 	}

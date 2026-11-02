@@ -1603,8 +1603,8 @@ func TestSingleDashCompatibility(t *testing.T) {
 }
 
 // TestSingleDashRetryDispatch pins that a retry which reached dispatch owns
-// its outcome: the raw command's own failure reaches the caller instead of
-// the flag error that triggered the retry, and each handler runs once.
+// its outcome: the dispatched command's failure reaches the caller instead
+// of the flag error that triggered the retry, and each handler runs once.
 type countingAdapter struct {
 	testAdapter
 	before int
@@ -1614,6 +1614,15 @@ func (a *countingAdapter) BeforeHandler(inv Invocation, stderr io.Writer) {
 	a.before++
 	a.testAdapter.BeforeHandler(inv, stderr)
 }
+
+// validateErrAdapter fails in the handler-phase validation, the step after a
+// pass has claimed dispatch.
+type validateErrAdapter struct {
+	testAdapter
+	err error
+}
+
+func (a *validateErrAdapter) Validate(inv Invocation) error { return a.err }
 
 func TestSingleDashRetryDispatch(t *testing.T) {
 	t.Run("a raw command's error survives the retry that reached it", func(t *testing.T) {
@@ -1672,6 +1681,56 @@ func TestSingleDashRetryDispatch(t *testing.T) {
 		}
 		if adapter.before != 1 {
 			t.Errorf("BeforeHandler ran %d times, want 1", adapter.before)
+		}
+	})
+
+	t.Run("a handler's error survives the retry that reached it", func(t *testing.T) {
+		runs := 0
+		app := &App{
+			Name:    "hccli",
+			Version: "vtest",
+			Commands: []*Command{{
+				Name:  "probe",
+				Short: "run one probe",
+				Flags: []Flag{{Name: "agent", Kind: String, Usage: "agent name"}},
+				Handle: func(ctx context.Context, inv Invocation, _ io.Writer) (any, error) {
+					runs++
+					return nil, errors.New("probe failed")
+				},
+			}},
+		}
+		code, _, stderr := runApp(t, app, &testAdapter{}, "probe", "-agent", "x")
+		if code != 1 {
+			t.Errorf("exit = %d, want 1: the handler failed operationally", code)
+		}
+		if want := "probe failed\n"; stderr != want {
+			t.Errorf("stderr = %q, want %q: the handler's own error", stderr, want)
+		}
+		if runs != 1 {
+			t.Errorf("handler ran %d times, want 1", runs)
+		}
+	})
+
+	t.Run("an adapter failure after dispatch is not masked by the flag error", func(t *testing.T) {
+		// The second pass dispatches and its validation fails. The pass
+		// owns its outcome, so its error is what the caller sees rather
+		// than the unknown-shorthand error that triggered the retry.
+		app := &App{
+			Name:    "hccli",
+			Version: "vtest",
+			Commands: []*Command{{
+				Name:  "probe",
+				Short: "run one probe",
+				Flags: []Flag{{Name: "agent", Kind: String, Usage: "agent name"}},
+				Handle: func(ctx context.Context, inv Invocation, _ io.Writer) (any, error) {
+					return map[string]any{"agent": inv.Flags["agent"]}, nil
+				},
+			}},
+		}
+		adapter := &validateErrAdapter{err: errors.New("probe rejected")}
+		_, _, stderr := runApp(t, app, adapter, "probe", "-agent", "x")
+		if want := "probe rejected\n"; stderr != want {
+			t.Errorf("stderr = %q, want %q: the dispatched pass's own error", stderr, want)
 		}
 	})
 }
