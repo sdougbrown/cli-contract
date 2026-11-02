@@ -75,7 +75,9 @@ introduces:
 - Declarations that were silently accepted now fail validation at startup:
   a multi-letter shorthand, two flags sharing a shorthand within one merged
   flag set, and `Short: "h"` on a command whose merged flag set declares no
-  flag named `help`.
+  flag named `help`. A flag that shadows an inherited flag of the same name
+  with a different kind is rejected too; before, it failed on every
+  invocation instead of at startup.
 - A non-bool flag declared `Short: "v"` on an app with a `Version` now takes
   `-v` itself; before, the shorthand was ignored and `-v` printed the
   version.
@@ -110,7 +112,8 @@ common := app.CommonFlagSchemas()
 
 `CommandSchema` and `FlagSchema` render the declared surface as JSON-ready
 data: names, Use strings, URL positionals, flag kinds (`string`/`bool`/
-`repeat`), usage strings, and defaults. Compose the app's own contract facts
+`repeat`), usage strings, defaults, and declared shorthands (`short`, omitted
+when a flag has none). Compose the app's own contract facts
 around them (statuses, error codes, envelope fields) into the document your
 harnesses parse.
 
