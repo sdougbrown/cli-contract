@@ -880,141 +880,200 @@ func TestSuppliedFlags(t *testing.T) {
 		}},
 	}
 
-	// An explicitly-passed empty value is Supplied with its empty value.
-	inv, err := Parse(app, []string{"job", "--name", ""})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, ok := inv.Supplied["name"]; !ok {
-		t.Error("Supplied[name] is absent, want present: the flag was typed")
-	}
-	if inv.Flags["name"] != "" {
-		t.Errorf("Flags[name] = %q, want the explicit empty value", inv.Flags["name"])
+	parse := func(t *testing.T, argv ...string) Invocation {
+		t.Helper()
+		inv, err := Parse(app, argv)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return inv
 	}
 
-	// An omitted flag with a declared default keeps its value and stays
-	// absent from Supplied.
-	inv, err = Parse(app, []string{"job"})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, ok := inv.Supplied["retries"]; ok {
-		t.Error("Supplied[retries] is present, want absent: the flag was not typed")
-	}
-	if inv.Ints["retries"] != 16 {
-		t.Errorf("retries = %d, want the declared default 16", inv.Ints["retries"])
-	}
+	t.Run("an explicit empty value is supplied", func(t *testing.T) {
+		inv := parse(t, "job", "--name", "")
+		if _, ok := inv.Supplied["name"]; !ok {
+			t.Error("Supplied[name] is absent, want present: the flag was typed")
+		}
+		if inv.Flags["name"] != "" {
+			t.Errorf("Flags[name] = %q, want the explicit empty value", inv.Flags["name"])
+		}
+	})
 
-	// A bool flag is Supplied given as its long name, and as its shorthand.
-	inv, err = Parse(app, []string{"job", "--verbose"})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, ok := inv.Supplied["verbose"]; !ok {
-		t.Error("Supplied[verbose] is absent, want present for --verbose")
-	}
-	if !inv.Bools["verbose"] {
-		t.Error("verbose = false, want true")
-	}
-	inv, err = Parse(app, []string{"job", "-v"})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, ok := inv.Supplied["verbose"]; !ok {
-		t.Error("Supplied[verbose] is absent, want present for -v")
-	}
+	t.Run("an omitted flag with a declared default is absent", func(t *testing.T) {
+		inv := parse(t, "job")
+		if _, ok := inv.Supplied["retries"]; ok {
+			t.Error("Supplied[retries] is present, want absent: the flag was not typed")
+		}
+		if inv.Ints["retries"] != 16 {
+			t.Errorf("retries = %d, want the declared default 16", inv.Ints["retries"])
+		}
+	})
 
-	// A repeat flag is Supplied with every value collected.
-	inv, err = Parse(app, []string{"job", "--tag", "a", "--tag=b"})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, ok := inv.Supplied["tag"]; !ok {
-		t.Error("Supplied[tag] is absent, want present")
-	}
-	if len(inv.Events) != 2 || inv.Events[0] != "a" || inv.Events[1] != "b" {
-		t.Errorf("events = %v, want [a b]", inv.Events)
-	}
+	t.Run("an explicitly-passed default value is supplied", func(t *testing.T) {
+		inv := parse(t, "job", "--retries", "16")
+		if _, ok := inv.Supplied["retries"]; !ok {
+			t.Error("Supplied[retries] is absent, want present: the flag was typed")
+		}
+		if inv.Ints["retries"] != 16 {
+			t.Errorf("retries = %d, want 16", inv.Ints["retries"])
+		}
+	})
 
-	// A common flag given before the subcommand is Supplied.
-	inv, err = Parse(app, []string{"--format", "json", "job"})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, ok := inv.Supplied["format"]; !ok {
-		t.Error("Supplied[format] is absent, want present")
-	}
-	if inv.Flags["format"] != "json" {
-		t.Errorf("format = %q, want json", inv.Flags["format"])
-	}
+	t.Run("a bool flag given as its long name", func(t *testing.T) {
+		inv := parse(t, "job", "--verbose")
+		if _, ok := inv.Supplied["verbose"]; !ok {
+			t.Error("Supplied[verbose] is absent, want present for --verbose")
+		}
+		if !inv.Bools["verbose"] {
+			t.Error("verbose = false, want true")
+		}
+	})
 
-	// A Duration flag is Supplied when typed.
-	inv, err = Parse(app, []string{"job", "--wait", "3s"})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, ok := inv.Supplied["wait"]; !ok {
-		t.Error("Supplied[wait] is absent, want present for --wait")
-	}
-	if inv.Durations["wait"] != 3*time.Second {
-		t.Errorf("wait = %v, want 3s", inv.Durations["wait"])
-	}
+	t.Run("a bool flag given as its shorthand", func(t *testing.T) {
+		inv := parse(t, "job", "-v")
+		if _, ok := inv.Supplied["verbose"]; !ok {
+			t.Error("Supplied[verbose] is absent, want present for -v")
+		}
+	})
 
-	// A repeated bool is Supplied once, with the last value.
-	inv, err = Parse(app, []string{"job", "--verbose", "--verbose=false"})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, ok := inv.Supplied["verbose"]; !ok {
-		t.Error("Supplied[verbose] is absent, want present")
-	}
-	if inv.Bools["verbose"] {
-		t.Error("verbose = true, want false: the last value wins")
-	}
+	t.Run("a repeat flag collects every value", func(t *testing.T) {
+		inv := parse(t, "job", "--tag", "a", "--tag=b")
+		if _, ok := inv.Supplied["tag"]; !ok {
+			t.Error("Supplied[tag] is absent, want present")
+		}
+		if len(inv.Events) != 2 || inv.Events[0] != "a" || inv.Events[1] != "b" {
+			t.Errorf("events = %v, want [a b]", inv.Events)
+		}
+	})
 
-	// The handler sees the same Supplied as Parse for the same argv.
-	argv := []string{"--format", "json", "job", "-v", "--name", "x", "--tag", "t1", "--tag=t2"}
-	if code, _, _ := runApp(t, app, &testAdapter{}, argv...); code != 0 {
-		t.Fatalf("exit = %d, want 0", code)
-	}
-	parsed, err := Parse(app, argv)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !maps.Equal(handlerInv.Supplied, parsed.Supplied) {
-		t.Errorf("handler Supplied = %v, want Parse's %v", handlerInv.Supplied, parsed.Supplied)
-	}
+	t.Run("a common flag given before the subcommand", func(t *testing.T) {
+		inv := parse(t, "--format", "json", "job")
+		if _, ok := inv.Supplied["format"]; !ok {
+			t.Error("Supplied[format] is absent, want present")
+		}
+		if inv.Flags["format"] != "json" {
+			t.Errorf("format = %q, want json", inv.Flags["format"])
+		}
+	})
 
-	// A persistent flag given on a nested leaf is Supplied on the leaf's
-	// Invocation.
-	nested := &App{
-		Name:    "ncli",
-		Version: "vtest",
-		Commands: []*Command{{
-			Name:  "wf",
-			Short: "workflow utilities",
-			PersistentFlags: []Flag{
-				{Name: "region", Kind: String, Usage: "target region"},
-			},
-			Subcommands: []*Command{{
-				Name:  "list",
-				Short: "list workflows",
-				Handle: func(ctx context.Context, inv Invocation, _ io.Writer) (any, error) {
-					return nil, nil
+	t.Run("a duration flag", func(t *testing.T) {
+		inv := parse(t, "job", "--wait", "3s")
+		if _, ok := inv.Supplied["wait"]; !ok {
+			t.Error("Supplied[wait] is absent, want present for --wait")
+		}
+		if inv.Durations["wait"] != 3*time.Second {
+			t.Errorf("wait = %v, want 3s", inv.Durations["wait"])
+		}
+	})
+
+	t.Run("a repeated bool keeps the last value", func(t *testing.T) {
+		inv := parse(t, "job", "--verbose", "--verbose=false")
+		if _, ok := inv.Supplied["verbose"]; !ok {
+			t.Error("Supplied[verbose] is absent, want present")
+		}
+		if inv.Bools["verbose"] {
+			t.Error("verbose = true, want false: the last value wins")
+		}
+	})
+
+	t.Run("the handler sees the same Supplied as Parse", func(t *testing.T) {
+		argv := []string{"--format", "json", "job", "-v", "--name", "x", "--tag", "t1", "--tag=t2"}
+		if code, _, _ := runApp(t, app, &testAdapter{}, argv...); code != 0 {
+			t.Fatalf("exit = %d, want 0", code)
+		}
+		parsed := parse(t, argv...)
+		if !maps.Equal(handlerInv.Supplied, parsed.Supplied) {
+			t.Errorf("handler Supplied = %v, want Parse's %v", handlerInv.Supplied, parsed.Supplied)
+		}
+	})
+
+	t.Run("a persistent flag given on a nested leaf", func(t *testing.T) {
+		nested := &App{
+			Name:    "ncli",
+			Version: "vtest",
+			Commands: []*Command{{
+				Name:  "wf",
+				Short: "workflow utilities",
+				PersistentFlags: []Flag{
+					{Name: "region", Kind: String, Usage: "target region"},
 				},
+				Subcommands: []*Command{{
+					Name:  "list",
+					Short: "list workflows",
+					Handle: func(ctx context.Context, inv Invocation, _ io.Writer) (any, error) {
+						return nil, nil
+					},
+				}},
 			}},
+		}
+		inv, err := Parse(nested, []string{"wf", "list", "--region", "eu"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, ok := inv.Supplied["region"]; !ok {
+			t.Error("Supplied[region] is absent, want present")
+		}
+		if inv.Flags["region"] != "eu" {
+			t.Errorf("region = %q, want eu", inv.Flags["region"])
+		}
+	})
+}
+
+// TestShorthandParsesEveryKind pins that Short registers for every flag kind:
+// one argv carries an Int, a Duration and a Repeat in short form.
+func TestShorthandParsesEveryKind(t *testing.T) {
+	app := &App{
+		Name:    "t",
+		Version: "v1",
+		Commands: []*Command{{
+			Name:  "job",
+			Short: "run a job",
+			Flags: []Flag{
+				{Name: "retries", Kind: Int, Short: "n", Usage: "retry attempts"},
+				{Name: "wait", Kind: Duration, Short: "w", Usage: "how long to wait"},
+				{Name: "tag", Kind: Repeat, Short: "t", Usage: "record tags"},
+			},
+			Handle: func(ctx context.Context, inv Invocation, _ io.Writer) (any, error) {
+				return map[string]any{"status": "ok"}, nil
+			},
 		}},
 	}
-	inv, err = Parse(nested, []string{"wf", "list", "--region", "eu"})
+	inv, err := Parse(app, []string{"job", "-n", "3", "-w", "3s", "-t", "a", "-t", "b"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, ok := inv.Supplied["region"]; !ok {
-		t.Error("Supplied[region] is absent, want present")
+	if inv.Ints["retries"] != 3 {
+		t.Errorf("retries = %d, want 3 from -n", inv.Ints["retries"])
 	}
-	if inv.Flags["region"] != "eu" {
-		t.Errorf("region = %q, want eu", inv.Flags["region"])
+	if inv.Durations["wait"] != 3*time.Second {
+		t.Errorf("wait = %v, want 3s from -w", inv.Durations["wait"])
 	}
+	if len(inv.Events) != 2 || inv.Events[0] != "a" || inv.Events[1] != "b" {
+		t.Errorf("events = %v, want [a b] from -t", inv.Events)
+	}
+	for _, name := range []string{"retries", "wait", "tag"} {
+		if _, ok := inv.Supplied[name]; !ok {
+			t.Errorf("Supplied[%s] is absent, want present", name)
+		}
+	}
+}
+
+// expectUsagePanic pins the library's validation failure for one invalid
+// declaration: Run panics with a message containing want, not with a pflag
+// panic from flag registration or from cobra's help flag.
+func expectUsagePanic(t *testing.T, app *App, argv []string, want string) {
+	t.Helper()
+	defer func() {
+		r := recover()
+		if r == nil {
+			t.Fatal("validate did not reject the declaration")
+		}
+		msg, ok := r.(string)
+		if !ok || !strings.Contains(msg, want) {
+			t.Errorf("panic = %v, want it to contain %q", r, want)
+		}
+	}()
+	Run(app, &testAdapter{}, argv, &bytes.Buffer{}, &bytes.Buffer{})
 }
 
 // TestValidateRejectsShorthandCollisions pins the shorthand validation:
@@ -1023,22 +1082,8 @@ func TestSuppliedFlags(t *testing.T) {
 // panicking inside pflag at registration. A flag that shadows a same-named
 // one keeps its shorthand.
 func TestValidateRejectsShorthandCollisions(t *testing.T) {
-	expectPanic := func(t *testing.T, app *App, want string) {
-		t.Helper()
-		defer func() {
-			r := recover()
-			if r == nil {
-				t.Fatal("validate did not reject the declaration")
-			}
-			if !strings.Contains(r.(string), want) {
-				t.Errorf("panic = %v, want it to contain %q", r, want)
-			}
-		}()
-		Run(app, &testAdapter{}, []string{"probe", "u"}, &bytes.Buffer{}, &bytes.Buffer{})
-	}
-
 	t.Run("two flags of one command sharing a shorthand", func(t *testing.T) {
-		expectPanic(t, &App{
+		expectUsagePanic(t, &App{
 			Name: "t", Version: "v1",
 			Commands: []*Command{{
 				Name: "probe", Short: "run one probe",
@@ -1048,11 +1093,25 @@ func TestValidateRejectsShorthandCollisions(t *testing.T) {
 				},
 				Handle: func(ctx context.Context, inv Invocation, _ io.Writer) (any, error) { return nil, nil },
 			}},
-		}, `flags "verbose" and "vanilla" share the "v" shorthand`)
+		}, []string{"probe", "u"}, `flags "verbose" and "vanilla" share the "v" shorthand`)
+	})
+
+	t.Run("two common flags sharing a shorthand", func(t *testing.T) {
+		expectUsagePanic(t, &App{
+			Name: "t", Version: "v1",
+			CommonFlags: []Flag{
+				{Name: "format", Kind: String, Short: "f", Usage: "output format"},
+				{Name: "filter", Kind: String, Short: "f", Usage: "filter expression"},
+			},
+			Commands: []*Command{{
+				Name: "probe", Short: "run one probe",
+				Handle: func(ctx context.Context, inv Invocation, _ io.Writer) (any, error) { return nil, nil },
+			}},
+		}, []string{"probe", "u"}, `common flags "format" and "filter" share the "f" shorthand`)
 	})
 
 	t.Run("a common flag and a command flag sharing a shorthand", func(t *testing.T) {
-		expectPanic(t, &App{
+		expectUsagePanic(t, &App{
 			Name: "t", Version: "v1",
 			CommonFlags: []Flag{{Name: "format", Kind: String, Short: "f", Usage: "output format"}},
 			Commands: []*Command{{
@@ -1060,11 +1119,11 @@ func TestValidateRejectsShorthandCollisions(t *testing.T) {
 				Flags:  []Flag{{Name: "filter", Kind: String, Short: "f", Usage: "filter expression"}},
 				Handle: func(ctx context.Context, inv Invocation, _ io.Writer) (any, error) { return nil, nil },
 			}},
-		}, `flags "format" and "filter" share the "f" shorthand`)
+		}, []string{"probe", "u"}, `flags "format" and "filter" share the "f" shorthand`)
 	})
 
 	t.Run("an inherited persistent flag and a leaf flag sharing a shorthand", func(t *testing.T) {
-		expectPanic(t, &App{
+		expectUsagePanic(t, &App{
 			Name: "t", Version: "v1",
 			Commands: []*Command{{
 				Name: "wf", Short: "workflow utilities",
@@ -1075,11 +1134,11 @@ func TestValidateRejectsShorthandCollisions(t *testing.T) {
 					Handle: func(ctx context.Context, inv Invocation, _ io.Writer) (any, error) { return nil, nil },
 				}},
 			}},
-		}, `flags "page" and "pretty" share the "p" shorthand`)
+		}, []string{"wf", "list"}, `flags "page" and "pretty" share the "p" shorthand`)
 	})
 
 	t.Run("persistent flags of two ancestors sharing a shorthand", func(t *testing.T) {
-		expectPanic(t, &App{
+		expectUsagePanic(t, &App{
 			Name: "t", Version: "v1",
 			Commands: []*Command{{
 				Name: "wf", Short: "workflow utilities",
@@ -1093,18 +1152,18 @@ func TestValidateRejectsShorthandCollisions(t *testing.T) {
 					}},
 				}},
 			}},
-		}, `command "wf ctl" flags "page" and "pretty" share the "p" shorthand`)
+		}, []string{"wf", "ctl", "enable"}, `command "wf ctl" flags "page" and "pretty" share the "p" shorthand`)
 	})
 
 	t.Run("a multi-character shorthand", func(t *testing.T) {
-		expectPanic(t, &App{
+		expectUsagePanic(t, &App{
 			Name: "t", Version: "v1",
 			Commands: []*Command{{
 				Name: "probe", Short: "run one probe",
 				Flags:  []Flag{{Name: "verbose", Kind: Bool, Short: "vv", Usage: "log verbosely"}},
 				Handle: func(ctx context.Context, inv Invocation, _ io.Writer) (any, error) { return nil, nil },
 			}},
-		}, `flag "verbose" uses shorthand "vv", want one letter`)
+		}, []string{"probe", "u"}, `flag "verbose" uses shorthand "vv", want one letter`)
 	})
 
 	t.Run("a same-named flag shadows with the same shorthand", func(t *testing.T) {
@@ -1129,6 +1188,37 @@ func TestValidateRejectsShorthandCollisions(t *testing.T) {
 	})
 }
 
+// TestValidateRejectsDuplicateFlagNames pins that a flag name repeated in one
+// registered list, or on a command and in the common flags, is a caller error
+// rather than a pflag panic at registration.
+func TestValidateRejectsDuplicateFlagNames(t *testing.T) {
+	t.Run("the same name twice in one list", func(t *testing.T) {
+		expectUsagePanic(t, &App{
+			Name: "t", Version: "v1",
+			Commands: []*Command{{
+				Name: "probe", Short: "run one probe",
+				Flags: []Flag{
+					{Name: "depth", Kind: Int, Usage: "fetch depth"},
+					{Name: "depth", Kind: Int, Usage: "fetch depth"},
+				},
+				Handle: func(ctx context.Context, inv Invocation, _ io.Writer) (any, error) { return nil, nil },
+			}},
+		}, []string{"probe", "u"}, `command "probe" declares flag "depth" twice`)
+	})
+
+	t.Run("a common flag name repeated on a leaf", func(t *testing.T) {
+		expectUsagePanic(t, &App{
+			Name: "t", Version: "v1",
+			CommonFlags: []Flag{{Name: "format", Kind: String, Usage: "output format"}},
+			Commands: []*Command{{
+				Name: "probe", Short: "run one probe",
+				Flags:  []Flag{{Name: "format", Kind: String, Usage: "output format"}},
+				Handle: func(ctx context.Context, inv Invocation, _ io.Writer) (any, error) { return nil, nil },
+			}},
+		}, []string{"probe", "u"}, `command "probe" flag "format" repeats a common flag name`)
+	})
+}
+
 // TestValidateRejectsHelpShorthand pins the caller error for a flag that
 // claims the help shorthand: cobra's default help flag reserves "h", so a
 // declaration using it would panic at execute instead of failing at
@@ -1137,16 +1227,7 @@ func TestValidateRejectsHelpShorthand(t *testing.T) {
 	app := testApp()
 	app.Commands[0].Flags = append(app.Commands[0].Flags,
 		Flag{Name: "hint", Kind: Bool, Short: "h", Usage: "print a hint"})
-	defer func() {
-		r := recover()
-		if r == nil {
-			t.Fatal("validate did not reject a flag with the help shorthand")
-		}
-		if !strings.Contains(r.(string), `flag "hint" uses shorthand "h"`) {
-			t.Errorf("panic = %v", r)
-		}
-	}()
-	Run(app, &testAdapter{}, []string{"reconcile", "u"}, &bytes.Buffer{}, &bytes.Buffer{})
+	expectUsagePanic(t, app, []string{"reconcile", "u"}, `flag "hint" uses shorthand "h"`)
 }
 
 // TestValidateRejectsReservedShorthandOnPersistentFlags pins that the
@@ -1168,16 +1249,7 @@ func TestValidateRejectsReservedShorthandOnPersistentFlags(t *testing.T) {
 				}},
 			}},
 		}
-		defer func() {
-			r := recover()
-			if r == nil {
-				t.Fatal("validate did not reject a reserved shorthand on a parent's persistent flags")
-			}
-			if !strings.Contains(r.(string), `flag "history" uses shorthand "h"`) {
-				t.Errorf("panic = %v, want the library's validation message", r)
-			}
-		}()
-		Run(app, &testAdapter{}, []string{"wf", "list"}, &bytes.Buffer{}, &bytes.Buffer{})
+		expectUsagePanic(t, app, []string{"wf", "list"}, `flag "history" uses shorthand "h"`)
 	})
 
 	t.Run("an inner nested node", func(t *testing.T) {
@@ -1197,16 +1269,117 @@ func TestValidateRejectsReservedShorthandOnPersistentFlags(t *testing.T) {
 				}},
 			}},
 		}
-		defer func() {
-			r := recover()
-			if r == nil {
-				t.Fatal("validate did not reject a reserved shorthand on an inner node's persistent flags")
-			}
-			if !strings.Contains(r.(string), `command "wf ctl" flag "hint" uses shorthand "h"`) {
-				t.Errorf("panic = %v, want the library's validation message", r)
-			}
-		}()
-		Run(app, &testAdapter{}, []string{"wf", "ctl", "enable"}, &bytes.Buffer{}, &bytes.Buffer{})
+		expectUsagePanic(t, app, []string{"wf", "ctl", "enable"}, `command "wf ctl" flag "hint" uses shorthand "h"`)
+	})
+}
+
+// TestHelpShorthandFollowsRegisteredFlags pins that the reserved "h" follows
+// the flag set the builder registers: a nested leaf's own flag cannot claim it
+// without a help flag, while an ancestor's persistent help flag frees it.
+func TestHelpShorthandFollowsRegisteredFlags(t *testing.T) {
+	t.Run("a nested leaf's own flag without a help flag", func(t *testing.T) {
+		expectUsagePanic(t, &App{
+			Name: "t", Version: "v1",
+			Commands: []*Command{{
+				Name: "wf", Short: "workflow group",
+				Subcommands: []*Command{{
+					Name: "list", Short: "list workflows",
+					Flags:  []Flag{{Name: "hint", Kind: Bool, Short: "h", Usage: "print a hint"}},
+					Handle: func(ctx context.Context, inv Invocation, _ io.Writer) (any, error) { return nil, nil },
+				}},
+			}},
+		}, []string{"wf", "list"}, `command "wf list" flag "hint" uses shorthand "h", reserved for the help flag`)
+	})
+
+	t.Run("a help flag on an ancestor's persistent flags", func(t *testing.T) {
+		app := &App{
+			Name: "t", Version: "v1",
+			Commands: []*Command{{
+				Name: "wf", Short: "workflow group",
+				PersistentFlags: []Flag{{Name: "help", Kind: Bool, Usage: "show help"}},
+				Subcommands: []*Command{{
+					Name: "list", Short: "list workflows",
+					Flags: []Flag{{Name: "host", Kind: String, Short: "h", Usage: "host to talk to"}},
+					Handle: func(ctx context.Context, inv Invocation, _ io.Writer) (any, error) {
+						return map[string]any{"host": inv.Flags["host"]}, nil
+					},
+				}},
+			}},
+		}
+		// Parse panics on an invalid declaration, so reaching the assertions
+		// proves the "h" shorthand passed validation.
+		inv, err := Parse(app, []string{"wf", "list", "-h", "example"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if inv.Flags["host"] != "example" {
+			t.Errorf("host = %q, want example: -h is the leaf flag's shorthand", inv.Flags["host"])
+		}
+	})
+}
+
+// TestIgnoredFlagListsAreNotValidated pins that a list the builder never
+// registers is neither checked nor allowed to reserve anything: a leaf's
+// persistent flags and an inner node's plain flags neither collide with an
+// inherited shorthand nor declare the help flag.
+func TestIgnoredFlagListsAreNotValidated(t *testing.T) {
+	t.Run("a leaf's persistent flags collide with an inherited shorthand", func(t *testing.T) {
+		app := &App{
+			Name: "t", Version: "v1",
+			Commands: []*Command{{
+				Name: "wf", Short: "workflow group",
+				PersistentFlags: []Flag{{Name: "page", Kind: Int, Short: "p", Usage: "page size"}},
+				Subcommands: []*Command{{
+					Name: "list", Short: "list workflows",
+					PersistentFlags: []Flag{{Name: "pretty", Kind: Bool, Short: "p", Usage: "print pretty"}},
+					Handle: func(ctx context.Context, inv Invocation, _ io.Writer) (any, error) {
+						return map[string]any{"page": inv.Ints["page"]}, nil
+					},
+				}},
+			}},
+		}
+		if code, stdout, stderr := runApp(t, app, &testAdapter{}, "wf", "list", "--page", "2"); code != 0 {
+			t.Errorf("exit = %d, stderr = %s; want a clean run", code, stderr)
+		} else if page := jsonField(t, stdout)["page"]; page != float64(2) {
+			t.Errorf("page = %v, want the inherited flag's 2", page)
+		}
+	})
+
+	t.Run("an inner node's plain flags collide with an inherited shorthand", func(t *testing.T) {
+		app := &App{
+			Name: "t", Version: "v1",
+			Commands: []*Command{{
+				Name: "wf", Short: "workflow group",
+				PersistentFlags: []Flag{{Name: "page", Kind: Int, Short: "p", Usage: "page size"}},
+				Subcommands: []*Command{{
+					Name: "ctl", Short: "controller group",
+					Flags: []Flag{{Name: "pretty", Kind: Bool, Short: "p", Usage: "print pretty"}},
+					Subcommands: []*Command{{
+						Name: "list", Short: "list controllers",
+						Handle: func(ctx context.Context, inv Invocation, _ io.Writer) (any, error) {
+							return map[string]any{"page": inv.Ints["page"]}, nil
+						},
+					}},
+				}},
+			}},
+		}
+		if code, stdout, stderr := runApp(t, app, &testAdapter{}, "wf", "--page", "2", "ctl", "list"); code != 0 {
+			t.Errorf("exit = %d, stderr = %s; want a clean run", code, stderr)
+		} else if page := jsonField(t, stdout)["page"]; page != float64(2) {
+			t.Errorf("page = %v, want the inherited flag's 2", page)
+		}
+	})
+
+	t.Run("a leaf's persistent help flag declares nothing", func(t *testing.T) {
+		expectUsagePanic(t, &App{
+			Name: "t", Version: "v1",
+			Commands: []*Command{{
+				Name: "probe", Short: "run one probe",
+				PersistentFlags: []Flag{{Name: "help", Kind: Bool, Usage: "show help"}},
+				Flags:           []Flag{{Name: "hint", Kind: Bool, Short: "h", Usage: "print a hint"}},
+				Handle:          func(ctx context.Context, inv Invocation, _ io.Writer) (any, error) { return nil, nil },
+			}},
+		}, []string{"probe"}, `command "probe" flag "hint" uses shorthand "h", reserved for the help flag`)
 	})
 }
 
