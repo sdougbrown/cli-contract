@@ -149,7 +149,7 @@ func Parse(app *App, argv []string) (Invocation, error) {
 	if err := root.Execute(); err != nil {
 		return Invocation{}, asUsageError(err)
 	}
-	if !exec.ran {
+	if !exec.ran && !exec.rawRan {
 		return Invocation{}, UsageErrorf("missing subcommand")
 	}
 	return exec.inv, nil

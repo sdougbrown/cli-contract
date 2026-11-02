@@ -94,6 +94,10 @@ type execution struct {
 	result     any
 	handlerErr error
 	ran        bool
+	// rawRan marks a dispatched raw-output command: it wrote its own
+	// output, so Run exits 0 without a result, but Parse still yields
+	// its invocation.
+	rawRan bool
 }
 
 // asUsageError guarantees the usage classification for every dispatch-level
@@ -243,6 +247,8 @@ func rawRunE(exec *execution, runHandlers bool, c *Command, common []Flag) func(
 		if err != nil {
 			return err
 		}
+		exec.inv = inv
+		exec.rawRan = true
 		if runHandlers {
 			if err := c.Raw(cmd.Context(), inv, cmd.OutOrStdout()); err != nil {
 				return err

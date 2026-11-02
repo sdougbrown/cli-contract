@@ -427,9 +427,13 @@ func TestParse(t *testing.T) {
 		}
 	})
 
-	t.Run("raw commands produce no invocation", func(t *testing.T) {
-		if _, err := Parse(testApp(), []string{"schema"}); err == nil {
-			t.Error("schema: err = nil, want a caller error")
+	t.Run("raw commands yield their invocation", func(t *testing.T) {
+		inv, err := Parse(testApp(), []string{"schema"})
+		if err != nil {
+			t.Fatalf("schema: %v", err)
+		}
+		if inv.Command != "schema" {
+			t.Errorf("inv.Command = %q, want schema", inv.Command)
 		}
 	})
 }
