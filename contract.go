@@ -140,6 +140,11 @@ type App struct {
 	// BareHelp makes a bare invocation print help and exit 0 instead of
 	// failing with a missing-subcommand caller error.
 	BareHelp bool
+	// HandlerOwnedSignals stops the library from watching SIGINT/SIGTERM:
+	// handlers that run servers or manage their own shutdown install
+	// their own handlers and choose the exit code. The default (false)
+	// exits with the signal's shell code (130/143) and suppresses stdout.
+	HandlerOwnedSignals bool
 	// VersionTemplate renders the --version output; the default is
 	// "<name> {{.Version}}\n".
 	VersionTemplate string

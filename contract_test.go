@@ -648,3 +648,18 @@ func jsonField(t *testing.T, data string) map[string]any {
 	}
 	return m
 }
+
+func TestHandlerOwnedSignals(t *testing.T) {
+	app := testApp()
+	app.HandlerOwnedSignals = true
+	app.Commands[0].Handle = func(ctx context.Context, inv Invocation, _ io.Writer) (any, error) {
+		// A server-style handler: it manages signals itself and returns
+		// its own exit decision.
+		return map[string]any{"command": "reconcile", "status": "updated"}, nil
+	}
+	adapter := &testAdapter{seams: &testSeams{signal: os.Interrupt}}
+	code, _, _ := runApp(t, app, adapter, "reconcile", "u")
+	if code != 0 {
+		t.Fatalf("exit code = %d, want 0: the handler owns signals", code)
+	}
+}

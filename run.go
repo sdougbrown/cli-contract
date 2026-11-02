@@ -29,11 +29,18 @@ func Run(app *App, adapter Adapter, argv []string, stdout, stderr io.Writer) int
 	root.SetErr(stderr)
 	root.SetArgs(argv)
 
-	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
-	defer stop()
+	ctx := context.Background()
 	sigCh := make(chan os.Signal, 1)
-	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
-	defer signal.Stop(sigCh)
+	if app.HandlerOwnedSignals {
+		// The handler installs its own signal wiring and picks the exit
+		// code; the library stays out of the way.
+	} else {
+		var stop context.CancelFunc
+		ctx, stop = signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+		defer stop()
+		signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
+		defer signal.Stop(sigCh)
+	}
 
 	if err := root.ExecuteContext(ctx); err != nil {
 		// Help never reaches here (cobra writes plain help and returns
