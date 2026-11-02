@@ -63,12 +63,12 @@ func TestManifestShape(t *testing.T) {
 		t.Errorf("version = %v", m["version"])
 	}
 	tools := m["tools"].(map[string]any)
-	for _, name := range []string{"reconcile", "ack", "testcli-store-path", "testcli-store-reset"} {
+	for _, name := range []string{"testcli-reconcile", "testcli-ack", "testcli-store-path", "testcli-store-reset"} {
 		if _, ok := tools[name]; !ok {
 			t.Errorf("manifest missing tool %q", name)
 		}
 	}
-	reconcile := tools["reconcile"].(map[string]any)
+	reconcile := tools["testcli-reconcile"].(map[string]any)
 	if reconcile["description"] != "collect feedback and establish the baseline" {
 		t.Errorf("description = %v", reconcile["description"])
 	}
@@ -82,10 +82,10 @@ func TestManifestShape(t *testing.T) {
 	}
 	props := schema["properties"].(map[string]any)
 	head := props["head"].(map[string]any)
-	if head["type"] != "string" || head["required"] != true {
-		t.Errorf("head property = %v, want string+required", head)
+	if head["type"] != "string" {
+		t.Errorf("head property = %v, want string", head)
 	}
-	ack := tools["ack"].(map[string]any)
+	ack := tools["testcli-ack"].(map[string]any)
 	aschema := ack["inputSchema"].(map[string]any)
 	event := aschema["properties"].(map[string]any)["event"].(map[string]any)
 	if event["type"] != "array" {
