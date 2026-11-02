@@ -41,7 +41,9 @@ func Run(app *App, adapter Adapter, argv []string, stdout, stderr io.Writer) int
 		// envelope and exit 2.
 		err = asUsageError(err)
 		adapter.Write(stdout, adapter.ErrorResult(command, err))
-		writeDiagnostic(adapter, stderr, Invocation{Command: command}, err)
+		// Dispatch-level errors are self-prefixed: the messages are built
+		// under the app's error prefix at the validation sites.
+		fmt.Fprintln(stderr, err.Error())
 		return adapter.ExitCode(Invocation{Command: command}, nil, err)
 	}
 	// Help paths (bare --help, the help command, <command> --help) print
@@ -96,9 +98,9 @@ func Run(app *App, adapter Adapter, argv []string, stdout, stderr io.Writer) int
 	return adapter.ExitCode(exec.inv, result, exec.handlerErr)
 }
 
-// writeDiagnostic writes one failure diagnostic to stderr. The default is
-// the error's message; the HandlerDiagnostics extension formats it (or
-// silences it with an empty string).
+// writeDiagnostic writes one handler-failure diagnostic to stderr. The
+// default is the error's message; the HandlerDiagnostics extension formats
+// it (or silences it with an empty string).
 func writeDiagnostic(adapter Adapter, stderr io.Writer, inv Invocation, err error) {
 	line := err.Error()
 	if hd, ok := adapter.(HandlerDiagnostics); ok {
@@ -110,8 +112,8 @@ func writeDiagnostic(adapter Adapter, stderr io.Writer, inv Invocation, err erro
 }
 
 // HandlerDiagnostics is an optional Adapter extension that formats the
-// stderr diagnostic for handler and dispatch failures. The default prints
-// the error's message; an empty string prints nothing.
+// stderr diagnostic for handler failures. The default prints the error's
+// message; an empty string prints nothing.
 type HandlerDiagnostics interface {
 	HandlerDiagnostic(inv Invocation, err error) string
 }
