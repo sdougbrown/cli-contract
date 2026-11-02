@@ -131,13 +131,16 @@ type HandlerDiagnostics interface {
 	HandlerDiagnostic(inv Invocation, err error) string
 }
 
-// Parse parses argv (without the program name) without running anything: it
-// executes the tree in parse-only mode, so flags and positionals are
-// validated by the same Args functions dispatch uses, and returns the
-// captured Invocation. Commands that produce no Invocation (help paths,
-// raw-output commands) return a caller error, matching Run's no-envelope
-// behavior for them.
+// Parse parses argv (without the program name) without running anything:
+// it validates the declaration like Run, executes the tree in parse-only
+// mode, so flags and positionals are validated by the same Args functions
+// dispatch uses, and returns the captured Invocation. Commands that
+// produce no Invocation (help paths, raw-output commands) return a caller
+// error, matching Run's no-envelope behavior for them.
 func Parse(app *App, argv []string) (Invocation, error) {
+	if err := validate(app); err != nil {
+		panic(err.Error())
+	}
 	if len(argv) == 0 {
 		return Invocation{}, UsageErrorf("missing subcommand")
 	}
