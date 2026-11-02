@@ -67,7 +67,7 @@ func Manifest(app *clicontract.App, opts Options) ([]byte, error) {
 	for _, cmd := range app.Commands {
 		if len(cmd.Subcommands) > 0 {
 			for _, sub := range cmd.Subcommands {
-				tools[toolName(cmd.Name, sub.Name)] = buildTool(
+				tools[toolName(app.Name, cmd.Name+"-"+sub.Name)] = buildTool(
 					opts, timeout, app.Name, []string{cmd.Name, sub.Name}, sub, app.CommonFlags)
 			}
 			continue
