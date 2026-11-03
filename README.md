@@ -64,10 +64,46 @@ The conventions the library owns:
 - Every dispatch-level failure (unknown command, bad flag, bad positional)
   arrives at the adapter as a `*UsageError` and is the app's to format.
 
+## Single-dash long flags
+
+`Run` and `Parse` hand cobra the argv untouched. When parsing fails with
+an error a single-dash long flag produces — pflag's unknown-shorthand and
+unknown-flag errors on the command cobra resolved, or an unresolved command
+name — the library rewrites the single-dash spellings of that command's
+long flags to their double-dash form (`-agent x` becomes `--agent x`) and
+parses again. Only the failing command's own segment is rewritten: the
+flags before the positional where cobra descends for a command that owns
+subcommands, and everything left for a leaf. A rewrite can expose a deeper
+command, so the passes repeat while one rewrites a token. An argv that
+already parsed is never touched, and every failure before dispatch reports
+the original error.
+
+The precedence a single dash carries:
+
+- A single-dash token that parses as declared shorthands keeps that
+  meaning: with `-v` and `-b` declared as bool shorthands, `-vb x` still
+  sets both bools and `-vb=false` still sets v and clears b. The token
+  becomes a long flag only when the shorthand reading fails — a lone long
+  flag `-agent x`, or a cluster that hits an undeclared letter, rewrites.
+- A token after a value-taking flag is that flag's value, single dash or
+  not: `--label -format probe tgt` still sets label to `-format`.
+- Tokens after a bare `--` are positionals and are never rewritten, and a
+  command declared `NoInterspersed` — top-level or nested — leaves
+  everything after its first positional alone.
+- Single-dash common flags work before the subcommand name
+  (`-format json probe tgt`); leaf-only flags typed before their
+  subcommand name still fail, as they did before.
+
+`Invocation.Supplied` records the flags given on the command line, every
+kind included, with inherited persistent and common flags landing on the
+leaf's invocation. A defaulted flag that was not typed keeps its default
+value and stays out of the map, so an explicitly-passed zero is
+distinguishable from absent.
+
 ## Compatibility in v0.5.0
 
-These declarations and invocations are the exceptions the release
-introduces:
+An argv that parsed under v0.4.x takes the same first pass untouched. These
+declarations and invocations are the exceptions the release introduces:
 
 - `Short` registers for every flag kind. Before, only `Bool` registered its
   shorthand and the other kinds dropped it silently, so `Short: "n"` on an
@@ -84,6 +120,9 @@ introduces:
 - A nested command declared `NoInterspersed` now stops flag parsing at its
   first positional, as a top-level one already did, so dashed tokens after
   that positional stay positionals.
+- With nil argv the library reads `os.Args[1:]` itself, so the error
+  envelope's `command` and `Invocation.Command` report `os.Args[1]`
+  instead of an empty string.
 
 ## Adapter
 
@@ -124,7 +163,8 @@ inv, err := clicontract.Parse(app, argv)
 ```
 
 Same tree, same validation, no handlers: for harnesses that validate argv
-before executing, and for tests that assert on parsed invocations.
+before executing, and for tests that assert on parsed invocations. Nil
+argv is the process's own arguments, as in `Run`.
 
 ## License
 
