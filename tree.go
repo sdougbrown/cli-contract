@@ -111,9 +111,10 @@ func asUsageError(err error) error {
 	return &UsageError{Message: err.Error()}
 }
 
-// addFlags registers one command's flags on a flag set. Typed defaults from
-// the declaration become the parse defaults: an absent flag yields the
-// documented default, and an explicitly-passed zero passes through as zero.
+// addFlags registers one command's flags on a flag set, the declared
+// shorthand included. Typed defaults from the declaration become the
+// parse defaults: an absent flag yields the documented default, and an
+// explicitly-passed zero passes through as zero.
 func addFlags(fs *pflag.FlagSet, flags []Flag) {
 	for _, f := range flags {
 		switch f.Kind {
@@ -124,27 +125,41 @@ func addFlags(fs *pflag.FlagSet, flags []Flag) {
 				fs.Bool(f.Name, false, f.Usage)
 			}
 		case Repeat:
-			fs.StringArray(f.Name, nil, f.Usage)
+			if f.Short != "" {
+				fs.StringArrayP(f.Name, f.Short, nil, f.Usage)
+			} else {
+				fs.StringArray(f.Name, nil, f.Usage)
+			}
 		case Int:
 			def := 0
 			if v, ok := f.Default.(int); ok {
 				def = v
 			}
-			fs.Int(f.Name, def, f.Usage)
+			if f.Short != "" {
+				fs.IntP(f.Name, f.Short, def, f.Usage)
+			} else {
+				fs.Int(f.Name, def, f.Usage)
+			}
 		case Duration:
 			def := time.Duration(0)
 			if v, ok := f.Default.(time.Duration); ok {
 				def = v
 			}
-			fs.Duration(f.Name, def, f.Usage)
-		case String:
+			if f.Short != "" {
+				fs.DurationP(f.Name, f.Short, def, f.Usage)
+			} else {
+				fs.Duration(f.Name, def, f.Usage)
+			}
+		default: // String
 			def := ""
 			if v, ok := f.Default.(string); ok {
 				def = v
 			}
-			fs.String(f.Name, def, f.Usage)
-		default:
-			fs.String(f.Name, "", f.Usage)
+			if f.Short != "" {
+				fs.StringP(f.Name, f.Short, def, f.Usage)
+			} else {
+				fs.String(f.Name, def, f.Usage)
+			}
 		}
 	}
 }
@@ -170,6 +185,7 @@ func invocationFrom(cmd *cobra.Command, c *Command, ancestors []*Command, args [
 		Bools:     map[string]bool{},
 		Ints:      map[string]int{},
 		Durations: map[string]time.Duration{},
+		Supplied:  map[string]bool{},
 	}
 	if len(ancestors) > 0 {
 		inv.Command = ancestors[0].Name
@@ -186,6 +202,13 @@ func invocationFrom(cmd *cobra.Command, c *Command, ancestors []*Command, args [
 	}
 	fs := cmd.Flags()
 	read := func(f Flag) error {
+		// Supplied is pflag's Changed, recorded where the value is read:
+		// every kind lands in the same map — inherited persistent and
+		// common flags included — and only flags that were typed, so an
+		// omitted flag is absent.
+		if fs.Changed(f.Name) {
+			inv.Supplied[f.Name] = true
+		}
 		switch f.Kind {
 		case Bool:
 			b, err := fs.GetBool(f.Name)
@@ -304,9 +327,13 @@ func (exec *execution) invocation(ctx context.Context, c *Command, inv Invocatio
 
 // buildTree builds the cobra command tree from the declared commands. The
 // declarations are the single source of truth: every flag, positional rule,
-// and handler binding derives from them, and validate() fails startup on
-// drift.
+// and handler binding derives from them. Every entry point builds through
+// here, so the declaration contract is enforced once: an invalid declaration
+// panics at startup instead of inside pflag at registration.
 func (a *App) buildTree(exec *execution, runHandlers bool) *cobra.Command {
+	if err := validate(a); err != nil {
+		panic(err.Error())
+	}
 	root := &cobra.Command{
 		Use:     a.Name,
 		Short:   a.RootShort,
@@ -449,6 +476,9 @@ func (a *App) buildNested(exec *execution, runHandlers bool, ancestors []*Comman
 		Args:  a.positionalArgs(path, c),
 		RunE:  dispatchRunE(exec, runHandlers, c, ancestors, a.CommonFlags),
 	}
+	if c.NoInterspersed {
+		subCmd.Flags().SetInterspersed(false)
+	}
 	addFlags(subCmd.Flags(), c.Flags)
 	return subCmd
 }
@@ -463,8 +493,9 @@ func commandNames(cmds []*Command) []string {
 }
 
 // Tree builds the cobra command tree without an adapter: for tests and
-// introspection that walk the registered surface. Dispatching from the
-// returned tree is not supported.
+// introspection that walk the registered surface. An invalid declaration
+// panics here, as it does in Run and Parse. Dispatching from the returned
+// tree is not supported.
 func (a *App) Tree() *cobra.Command {
 	exec := &execution{app: a}
 	return a.buildTree(exec, false)

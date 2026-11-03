@@ -87,6 +87,11 @@ type Invocation struct {
 	Ints map[string]int
 	// Durations holds duration flag values by name; absent flags are 0.
 	Durations map[string]time.Duration
+	// Supplied marks the flags given on the command line (pflag's
+	// Changed): an omitted flag — even one with a declared default — is
+	// absent from the map. Covers every kind, including inherited
+	// persistent and common flags.
+	Supplied map[string]bool
 }
 
 // HandleFunc runs one parsed command invocation. The returned result is
@@ -111,12 +116,13 @@ type Command struct {
 	// values meant for the command pass through instead of parsing as
 	// flags. The default (false) allows flags anywhere.
 	NoInterspersed bool
-	// Flags are the command-specific flags. Common flags are declared once
-	// on the App and registered persistently.
+	// Flags are the command-specific flags; the App's CommonFlags are
+	// registered on every command. Ignored on a command that owns
+	// Subcommands, whose own flags are its PersistentFlags.
 	Flags []Flag
 	// PersistentFlags are flags declared on a parent command and inherited
-	// by its subcommands; they parse before the subcommand name. Only
-	// meaningful on commands that own Subcommands.
+	// by its subcommands; they parse before the subcommand name. Ignored on
+	// a command without Subcommands.
 	PersistentFlags []Flag
 	// Subcommands nest under this command (store path, store reset).
 	Subcommands []*Command
@@ -165,72 +171,156 @@ func UsageErrorf(format string, args ...any) *UsageError {
 }
 
 // validate checks one declared App: every command and subcommand has a
-// short, flags are well-formed, and Handle/Raw are exclusive. Called by Run
-// so drift fails at startup.
+// short, the flag lists the tree builder registers are well-formed and free
+// of repeats, and Handle/Raw are exclusive. Called by buildTree so drift
+// fails at startup on every entry point.
 func validate(app *App) error {
-	if err := validateFlags(app.Name, app.CommonFlags); err != nil {
+	commonNames := make(map[string]bool, len(app.CommonFlags))
+	for _, f := range app.CommonFlags {
+		commonNames[f.Name] = true
+	}
+	// The root registers the common flags persistently, so they are the
+	// surface every command inherits.
+	inherited, err := validateFlags("common", nil, app.CommonFlags, nil)
+	if err != nil {
 		return err
 	}
 	for _, cmd := range app.Commands {
-		if cmd.Short == "" {
-			return UsageErrorf("command %q has no help short", cmd.Name)
-		}
-		if len(cmd.Subcommands) == 0 {
-			// Only leaf commands run: a parent with subcommands fails with
-			// a caller error when invoked bare.
-			if (cmd.Handle == nil) == (cmd.Raw == nil) {
-				return UsageErrorf("command %q must declare exactly one of Handle or Raw", cmd.Name)
-			}
-		}
-		if err := validateFlags(cmd.Name, cmd.Flags); err != nil {
+		if err := validateCommand(cmd.Name, cmd, inherited, commonNames); err != nil {
 			return err
-		}
-		for _, sub := range cmd.Subcommands {
-			if err := validateNested(cmd.Name, sub); err != nil {
-				return err
-			}
 		}
 	}
 	return nil
 }
 
-// validateFlags checks one flag list: named, known kind, and a usage string.
-// validateNested checks one nested node recursively: help text everywhere,
-// and exactly one of Handle or Raw on leaves only.
-func validateNested(parent string, sub *Command) error {
-	path := parent + " " + sub.Name
-	if sub.Short == "" {
-		return UsageErrorf("command %q has no help short", path)
-	}
-	if len(sub.Subcommands) > 0 {
-		for _, inner := range sub.Subcommands {
-			if err := validateNested(sub.Name, inner); err != nil {
-				return err
-			}
-		}
-		return nil
-	}
-	if (sub.Handle == nil) == (sub.Raw == nil) {
-		return UsageErrorf("command %q must declare exactly one of Handle or Raw", path)
-	}
-	return validateFlags(path, sub.Flags)
+// surfaceFlag is one flag on a command's parse surface with the validation
+// label of the declaration it came from: `command "wf"` for an ancestor's
+// persistent flag, "common" for the app's common flags.
+type surfaceFlag struct {
+	Flag
+	declaredBy string
 }
 
-func validateFlags(command string, flags []Flag) error {
+// validateCommand checks one declared command and descends into its
+// subcommands, carrying the flag surface they inherit: the common flags and
+// every ancestor's persistent flags.
+func validateCommand(path string, c *Command, inherited []surfaceFlag, commonNames map[string]bool) error {
+	if c.Short == "" {
+		return UsageErrorf("command %q has no help short", path)
+	}
+	if len(c.Subcommands) == 0 && (c.Handle == nil) == (c.Raw == nil) {
+		// Only leaf commands run: a parent with subcommands fails with a
+		// caller error when invoked bare.
+		return UsageErrorf("command %q must declare exactly one of Handle or Raw", path)
+	}
+	// The builder registers a command's persistent flags only when the
+	// command owns subcommands, and its plain flags only on a leaf; the
+	// other list never reaches a flag set.
+	registered := c.PersistentFlags
+	if len(c.Subcommands) == 0 {
+		registered = c.Flags
+	}
+	surface, err := validateFlags(fmt.Sprintf("command %q", path), inherited, registered, commonNames)
+	if err != nil {
+		return err
+	}
+	for _, sub := range c.Subcommands {
+		if err := validateCommand(path+" "+sub.Name, sub, surface, commonNames); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// declaresHelp reports whether a command's surface declares a flag named
+// "help": a merged flag set that has one keeps cobra from claiming the "h"
+// shorthand for its own help flag.
+func declaresHelp(inherited []surfaceFlag, flags []Flag) bool {
+	for _, f := range inherited {
+		if f.Name == "help" {
+			return true
+		}
+	}
+	for _, f := range flags {
+		if f.Name == "help" {
+			return true
+		}
+	}
+	return false
+}
+
+// validateFlags checks one flag list the tree builder registers: named, known
+// kind, a usage string, and a one-letter shorthand cobra can register without
+// claiming the help flag's. It returns the surface its command parses: the
+// inherited flags the list does not shadow, then the list's own, in
+// registration order.
+//
+// pflag panics at registration on a repeated name or a shared shorthand, so
+// both are caller errors here. A flag named "help" anywhere in the surface
+// keeps cobra from claiming the "h" shorthand for its own help flag. A common
+// flag is declared once on the App, so a command that repeats one is a caller
+// error too, while a command may re-declare an ancestor's persistent flag of
+// the same kind and cobra then parses the command's own.
+func validateFlags(where string, inherited []surfaceFlag, flags []Flag, commonNames map[string]bool) ([]surfaceFlag, error) {
+	helpDeclared := declaresHelp(inherited, flags)
+	names := make(map[string]bool, len(flags))
 	for _, f := range flags {
 		switch f.Kind {
 		case String, Bool, Repeat, Int, Duration:
 		default:
-			return UsageErrorf("command %q flag %q has unknown kind %d", command, f.Name, f.Kind)
+			return nil, UsageErrorf("%s flag %q has unknown kind %d", where, f.Name, f.Kind)
 		}
 		if f.Usage == "" {
-			return UsageErrorf("command %q flag %q has no usage string", command, f.Name)
+			return nil, UsageErrorf("%s flag %q has no usage string", where, f.Name)
 		}
 		if f.Name == "" {
-			return UsageErrorf("command %q has an unnamed flag", command)
+			return nil, UsageErrorf("%s has an unnamed flag", where)
+		}
+		if names[f.Name] {
+			return nil, UsageErrorf("%s declares flag %q twice", where, f.Name)
+		}
+		if commonNames[f.Name] {
+			return nil, UsageErrorf("%s flag %q repeats a common flag name", where, f.Name)
+		}
+		if f.Short != "" && len(f.Short) != 1 {
+			return nil, UsageErrorf("%s flag %q uses shorthand %q, want one letter", where, f.Name, f.Short)
+		}
+		// Cobra's default help flag claims the "h" shorthand on every
+		// command whose surface has no flag named "help", during execute; a
+		// declaration using it would panic there.
+		if f.Short == "h" && !helpDeclared {
+			return nil, UsageErrorf("%s flag %q uses shorthand %q, reserved for the help flag", where, f.Name, f.Short)
+		}
+		// The shadow takes the name over from the inherited flag, so both
+		// must agree on the kind: pflag keeps only the shadow's value, while
+		// the invocation reads every inherited flag with its own kind.
+		for _, prev := range inherited {
+			if prev.Name == f.Name && prev.Kind != f.Kind {
+				return nil, UsageErrorf("%s flag %q has kind %s, but the same-named flag from %s has kind %s",
+					where, f.Name, f.Kind.KindSchema(), prev.declaredBy, prev.Kind.KindSchema())
+			}
+		}
+		names[f.Name] = true
+	}
+	surface := make([]surfaceFlag, 0, len(inherited)+len(flags))
+	for _, f := range inherited {
+		// A flag this command declares takes the name, and cobra drops the
+		// inherited one along with its shorthand.
+		if !names[f.Name] {
+			surface = append(surface, f)
 		}
 	}
-	return nil
+	for _, f := range flags {
+		if f.Short != "" {
+			for _, prev := range surface {
+				if prev.Short == f.Short {
+					return nil, UsageErrorf("%s flags %q and %q share the %q shorthand", where, prev.Name, f.Name, f.Short)
+				}
+			}
+		}
+		surface = append(surface, surfaceFlag{Flag: f, declaredBy: where})
+	}
+	return surface, nil
 }
 
 // commandUse is the cobra Use string for one command: the name plus the
