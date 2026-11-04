@@ -186,6 +186,9 @@ func Manifest(app *clicontract.App, opts Options) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
+	if err := validateResolvedConsistency(rules); err != nil {
+		return nil, err
+	}
 	var availability *availabilityShape
 	if len(app.AvailabilityConditions) > 0 || len(rules) > 0 {
 		conditions := make(map[string]conditionShape, len(app.AvailabilityConditions))
@@ -249,6 +252,54 @@ func resolvedRules(tool string, declared []*clicontract.AvailabilityRule) []*cli
 		out = append(out, resolve(rule))
 	}
 	return out
+}
+
+// validateResolvedConsistency enforces the composite contract on fully
+// resolved rules: every anyOf/eitherOf operand gates exactly one tool. After
+// resolution an operand's field is always set (empty took the declaring
+// command's tool), so distinct fields here mean the composite spans two
+// tools — a mismatch the declaration-time check cannot see when explicit and
+// inherited fields mix. Without this, the consumer's composite constructors
+// panic on the rendered manifest.
+func validateResolvedConsistency(rules []*clicontract.AvailabilityRule) error {
+	var walk func(rule *clicontract.AvailabilityRule) error
+	walk = func(rule *clicontract.AvailabilityRule) error {
+		var operands []*clicontract.AvailabilityRule
+		switch rule.Type {
+		case clicontract.RuleAnyOf:
+			operands = rule.Rules
+		case clicontract.RuleEitherOf:
+			for _, branch := range rule.Branches {
+				operands = append(operands, branch...)
+			}
+		default:
+			return nil
+		}
+		seen := ""
+		for _, inner := range operands {
+			if err := walk(inner); err != nil {
+				return err
+			}
+			if inner.Field == "" {
+				continue
+			}
+			if seen == "" {
+				seen = inner.Field
+			} else if seen != inner.Field {
+				return fmt.Errorf(
+					"%s rules must target the same fields; resolved operands name %q and %q",
+					rule.Type, seen, inner.Field,
+				)
+			}
+		}
+		return nil
+	}
+	for _, rule := range rules {
+		if err := walk(rule); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // resolveTargets rewrites a disables rule's targets from command paths

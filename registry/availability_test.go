@@ -577,3 +577,20 @@ func TestAvailabilityEitherOfBranchFieldMismatch(t *testing.T) {
 	}
 	expectTreePanic(t, app, "operands target different tools", true)
 }
+
+func TestManifestAvailabilityMixedOperandMismatchFails(t *testing.T) {
+	// An anyOf mixing an explicit GateOn with empty-field operands (which
+	// resolve to the declaring tool) spans two tools after resolution.
+	// Declaration-time validation sees only one explicit field, so the
+	// error must surface in Manifest on the resolved rules.
+	app := availabilityApp()
+	app.Commands[1].Availability = []*clicontract.AvailabilityRule{
+		clicontract.AnyOf(
+			clicontract.GateOn("testcli-view", clicontract.When("read_only"), ""),
+			clicontract.Gate(clicontract.When("read_only"), ""),
+		),
+	}
+	if _, err := Manifest(app, Options{Binary: "testcli"}); err == nil {
+		t.Fatal("expected Manifest to fail on a composite spanning two tools")
+	}
+}
