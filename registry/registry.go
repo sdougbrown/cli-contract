@@ -141,6 +141,12 @@ func resolvedRules(tool string, declared []*clicontract.AvailabilityRule) []*cli
 		if out.Field == "" && (out.Type == "enabledWhen" || out.Type == "requires") {
 			out.Field = tool
 		}
+		// Copy slice fields: a shallow struct copy would share Targets'
+		// backing array with the caller's declaration, and resolveTargets
+		// rewrites targets in place — the App must stay untouched.
+		if len(rule.Targets) > 0 {
+			out.Targets = append([]string(nil), rule.Targets...)
+		}
 		if len(rule.Rules) > 0 {
 			out.Rules = nil
 			for _, inner := range rule.Rules {

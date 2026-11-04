@@ -51,9 +51,12 @@ type AvailabilityRule struct {
 	// "eitherOf".
 	Type string `json:"type"`
 	// Field is the tool the rule gates; empty means the declaring command.
+	// Composite rules (anyOf, eitherOf) carry no field.
 	Field string `json:"field,omitempty"`
 	// Targets are the tools a disables rule turns off.
 	Targets []string `json:"targets,omitempty"`
+	// Group names an eitherOf rule; required for eitherOf.
+	Group string `json:"group,omitempty"`
 	// When is the rule's condition expression (every type but anyOf).
 	When *AvailabilityExpr `json:"when,omitempty"`
 	// Reason is reported when the rule fails. Each type carries a default.
@@ -95,34 +98,40 @@ func Not(expr *AvailabilityExpr) *AvailabilityExpr {
 }
 
 // Gate enables the declaring command's tool only when the expression passes.
-// The default reason is "condition not met".
+// An empty reason takes the default "condition not met".
 func Gate(when *AvailabilityExpr, reason string) *AvailabilityRule {
-	return gateRule("", when, reason)
+	return gateRule("", "enabledWhen", when, reason, "condition not met")
 }
 
 // GateOn is Gate targeting an explicitly named tool.
 func GateOn(field string, when *AvailabilityExpr, reason string) *AvailabilityRule {
-	return gateRule(field, when, reason)
+	return gateRule(field, "enabledWhen", when, reason, "condition not met")
 }
 
 // Requires keeps the declaring command's tool gated until the condition is
-// met. The default reason is "required condition not met".
+// met. An empty reason takes the default "required condition not met".
 func Requires(when *AvailabilityExpr, reason string) *AvailabilityRule {
-	return gateRule("", when, reason)
+	return gateRule("", "requires", when, reason, "required condition not met")
 }
 
 // RequiresOn is Requires targeting an explicitly named tool.
 func RequiresOn(field string, when *AvailabilityExpr, reason string) *AvailabilityRule {
-	return gateRule(field, when, reason)
+	return gateRule(field, "requires", when, reason, "required condition not met")
 }
 
-func gateRule(field string, when *AvailabilityExpr, reason string) *AvailabilityRule {
-	return &AvailabilityRule{Type: "enabledWhen", Field: field, When: when, Reason: reason}
+func gateRule(field, ruleType string, when *AvailabilityExpr, reason, defaultReason string) *AvailabilityRule {
+	if reason == "" {
+		reason = defaultReason
+	}
+	return &AvailabilityRule{Type: ruleType, Field: field, When: when, Reason: reason}
 }
 
-// Disables turns the named tools off while the condition holds. The default
-// reason is "overridden by condition".
+// Disables turns the named tools off while the condition holds. An empty
+// reason takes the default "overridden by condition".
 func Disables(targets []string, when *AvailabilityExpr, reason string) *AvailabilityRule {
+	if reason == "" {
+		reason = "overridden by condition"
+	}
 	return &AvailabilityRule{Type: "disables", Targets: targets, When: when, Reason: reason}
 }
 
@@ -132,9 +141,10 @@ func AnyOf(rules ...*AvailabilityRule) *AvailabilityRule {
 	return &AvailabilityRule{Type: "anyOf", Rules: rules}
 }
 
-// EitherOf passes when any branch's rules all pass.
+// EitherOf passes when any branch's rules all pass. The group names the
+// choice in the rendered manifest and in consumer diagnostics.
 func EitherOf(group string, branches map[string][]*AvailabilityRule) *AvailabilityRule {
-	return &AvailabilityRule{Type: "eitherOf", Branches: branches}
+	return &AvailabilityRule{Type: "eitherOf", Group: group, Branches: branches}
 }
 
 // validateAvailability checks the app's availability declarations: known
@@ -208,12 +218,31 @@ func validateAvailabilityRule(path string, index int, rule *AvailabilityRule, de
 		if len(rule.Rules) == 0 {
 			return UsageErrorf("command %q availability rule %d (anyOf) has no rules", path, index)
 		}
+		// All operands must gate the same tool: resolvedRules fills empty
+		// fields with the declaring command's tool, so operands that name
+		// different tools here would render an anyOf spanning two tools.
+		explicitField := ""
 		for i, inner := range rule.Rules {
 			if err := validateAvailabilityRule(path, i, inner, declared); err != nil {
 				return err
 			}
+			if inner.Field != "" {
+				if explicitField == "" {
+					explicitField = inner.Field
+				} else if explicitField != inner.Field {
+					return UsageErrorf(
+						"command %q availability rule %d (anyOf) operands target different tools %q and %q",
+						path, index, explicitField, inner.Field,
+					)
+				}
+			}
 		}
 	case "eitherOf":
+		if rule.Group == "" {
+			return UsageErrorf(
+				"command %q availability rule %d (eitherOf) requires a group name", path, index,
+			)
+		}
 		if len(rule.Branches) == 0 {
 			return UsageErrorf("command %q availability rule %d (eitherOf) has no branches", path, index)
 		}
