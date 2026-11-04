@@ -529,3 +529,51 @@ func TestAvailabilityDeclarationValidationMore(t *testing.T) {
 		})
 	}
 }
+
+func TestManifestAvailabilityTargetsResolveThroughComposites(t *testing.T) {
+	// Disables targets declared inside anyOf rules and eitherOf branches
+	// must resolve through resolveTargets' recursion; a regression that
+	// skips it would emit dangling tool names the consumer rejects.
+	app := availabilityApp()
+	app.Commands[2].Availability = append(app.Commands[2].Availability,
+		clicontract.AnyOf(
+			clicontract.Disables([]string{"view"}, clicontract.When("read_only"), ""),
+			clicontract.Gate(clicontract.When("read_only"), ""),
+		),
+	)
+	app.Commands[2].Availability = append(app.Commands[2].Availability,
+		clicontract.EitherOf("relay", map[string][]*clicontract.AvailabilityRule{
+			"main": {clicontract.Disables([]string{"edit"}, clicontract.When("read_only"), "")},
+		}),
+	)
+	manifest, err := Manifest(app, Options{Binary: "testcli"})
+	if err != nil {
+		t.Fatalf("manifest: %v", err)
+	}
+	body := string(manifest)
+	if !strings.Contains(body, `"targets": [
+        "testcli-view"
+      ]`) && !strings.Contains(body, "testcli-view") {
+		t.Error("anyOf-wrapped disables target did not resolve to a tool name")
+	}
+	if !strings.Contains(body, "testcli-edit") {
+		t.Error("eitherOf-branch disables target did not resolve to a tool name")
+	}
+	if strings.Contains(body, `"targets": [
+        "view"`) {
+		t.Error("a bare command path leaked into the manifest targets")
+	}
+}
+
+func TestAvailabilityEitherOfBranchFieldMismatch(t *testing.T) {
+	// The consumer's composite constructors panic when operands gate
+	// different tools; validation must catch it at the declaration site.
+	app := availabilityApp()
+	app.Commands[1].Availability = []*clicontract.AvailabilityRule{
+		clicontract.EitherOf("auth", map[string][]*clicontract.AvailabilityRule{
+			"a": {clicontract.GateOn("testcli-view", clicontract.When("read_only"), "")},
+			"b": {clicontract.GateOn("testcli-deploy", clicontract.When("read_only"), "")},
+		}),
+	}
+	expectTreePanic(t, app, "operands target different tools", true)
+}

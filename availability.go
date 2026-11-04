@@ -15,6 +15,25 @@ const (
 	ConditionNumbers = "number[]"
 )
 
+// Availability rule types.
+const (
+	RuleEnabledWhen = "enabledWhen"
+	RuleRequires    = "requires"
+	RuleDisables    = "disables"
+	RuleAnyOf       = "anyOf"
+	RuleEitherOf    = "eitherOf"
+)
+
+// Availability expression ops.
+const (
+	OpCond   = "cond"
+	OpCondEq = "condEq"
+	OpCondIn = "condIn"
+	OpAnd    = "and"
+	OpOr     = "or"
+	OpNot    = "not"
+)
+
 // Condition declares one availability input the consumer supplies at load.
 type Condition struct {
 	Name string
@@ -69,54 +88,54 @@ type AvailabilityRule struct {
 
 // When references a declared boolean condition.
 func When(condition string) *AvailabilityExpr {
-	return &AvailabilityExpr{Op: "cond", Condition: condition}
+	return &AvailabilityExpr{Op: OpCond, Condition: condition}
 }
 
 // CondEq compares a condition against a value.
 func CondEq(condition string, value any) *AvailabilityExpr {
-	return &AvailabilityExpr{Op: "condEq", Condition: condition, Value: value}
+	return &AvailabilityExpr{Op: OpCondEq, Condition: condition, Value: value}
 }
 
 // CondIn tests condition membership.
 func CondIn(condition string, values ...any) *AvailabilityExpr {
-	return &AvailabilityExpr{Op: "condIn", Condition: condition, Values: values}
+	return &AvailabilityExpr{Op: OpCondIn, Condition: condition, Values: values}
 }
 
 // And requires every operand to pass.
 func And(exprs ...*AvailabilityExpr) *AvailabilityExpr {
-	return &AvailabilityExpr{Op: "and", Exprs: exprs}
+	return &AvailabilityExpr{Op: OpAnd, Exprs: exprs}
 }
 
 // Or passes when any operand passes.
 func Or(exprs ...*AvailabilityExpr) *AvailabilityExpr {
-	return &AvailabilityExpr{Op: "or", Exprs: exprs}
+	return &AvailabilityExpr{Op: OpOr, Exprs: exprs}
 }
 
 // Not negates its operand.
 func Not(expr *AvailabilityExpr) *AvailabilityExpr {
-	return &AvailabilityExpr{Op: "not", Expr: expr}
+	return &AvailabilityExpr{Op: OpNot, Expr: expr}
 }
 
 // Gate enables the declaring command's tool only when the expression passes.
 // An empty reason takes the default "condition not met".
 func Gate(when *AvailabilityExpr, reason string) *AvailabilityRule {
-	return gateRule("", "enabledWhen", when, reason, "condition not met")
+	return gateRule("", RuleEnabledWhen, when, reason, "condition not met")
 }
 
 // GateOn is Gate targeting an explicitly named tool.
 func GateOn(field string, when *AvailabilityExpr, reason string) *AvailabilityRule {
-	return gateRule(field, "enabledWhen", when, reason, "condition not met")
+	return gateRule(field, RuleEnabledWhen, when, reason, "condition not met")
 }
 
 // Requires keeps the declaring command's tool gated until the condition is
 // met. An empty reason takes the default "required condition not met".
 func Requires(when *AvailabilityExpr, reason string) *AvailabilityRule {
-	return gateRule("", "requires", when, reason, "required condition not met")
+	return gateRule("", RuleRequires, when, reason, "required condition not met")
 }
 
 // RequiresOn is Requires targeting an explicitly named tool.
 func RequiresOn(field string, when *AvailabilityExpr, reason string) *AvailabilityRule {
-	return gateRule(field, "requires", when, reason, "required condition not met")
+	return gateRule(field, RuleRequires, when, reason, "required condition not met")
 }
 
 func gateRule(field, ruleType string, when *AvailabilityExpr, reason, defaultReason string) *AvailabilityRule {
@@ -132,67 +151,87 @@ func Disables(targets []string, when *AvailabilityExpr, reason string) *Availabi
 	if reason == "" {
 		reason = "overridden by condition"
 	}
-	return &AvailabilityRule{Type: "disables", Targets: targets, When: when, Reason: reason}
+	return &AvailabilityRule{Type: RuleDisables, Targets: targets, When: when, Reason: reason}
 }
 
 // AnyOf passes when any operand rule passes; all operands must target the
 // same tool (an empty field on every operand takes the declaring command's).
 func AnyOf(rules ...*AvailabilityRule) *AvailabilityRule {
-	return &AvailabilityRule{Type: "anyOf", Rules: rules}
+	return &AvailabilityRule{Type: RuleAnyOf, Rules: rules}
 }
 
 // EitherOf passes when any branch's rules all pass. The group names the
 // choice in the rendered manifest and in consumer diagnostics.
 func EitherOf(group string, branches map[string][]*AvailabilityRule) *AvailabilityRule {
-	return &AvailabilityRule{Type: "eitherOf", Group: group, Branches: branches}
+	return &AvailabilityRule{Type: RuleEitherOf, Group: group, Branches: branches}
 }
 
 // validateAvailability checks the app's availability declarations: known
-// expression ops, known rule types, declared conditions referenced, and
-// eitherOf group names present.
-func validateAvailability(app *App) error {
+// rule types and expression ops, declared conditions referenced, anyOf and
+// eitherOf operands gating one tool, and rules only on leaf commands. It
+// returns the condition set and the per-command rules for the shared
+// validate walk to apply.
+func validateAvailability(app *App) (*availabilityChecks, error) {
 	declared := make(map[string]bool, len(app.AvailabilityConditions))
 	seenCondition := make(map[string]bool, len(app.AvailabilityConditions))
 	for _, c := range app.AvailabilityConditions {
 		if c.Name == "" {
-			return UsageErrorf("availability condition must declare a name")
+			return nil, UsageErrorf("availability condition must declare a name")
 		}
 		if seenCondition[c.Name] {
-			return UsageErrorf("availability condition %q is declared more than once", c.Name)
+			return nil, UsageErrorf("availability condition %q is declared more than once", c.Name)
 		}
 		seenCondition[c.Name] = true
 		switch c.Type {
 		case ConditionBoolean, ConditionString, ConditionNumber, ConditionStrings, ConditionNumbers:
 		default:
-			return UsageErrorf(
+			return nil, UsageErrorf(
 				"availability condition %q has unsupported type %q", c.Name, c.Type,
 			)
 		}
 		declared[c.Name] = true
 	}
 
-	var walk func(path string, cmd *Command) error
-	walk = func(path string, cmd *Command) error {
+	checks := &availabilityChecks{declared: declared, rulesByCmd: map[*Command][]*AvailabilityRule{}}
+	var collect func(cmd *Command) error
+	collect = func(cmd *Command) error {
 		if len(cmd.Availability) > 0 && len(cmd.Subcommands) > 0 {
 			return UsageErrorf(
-				"command %q declares availability rules but owns subcommands; only leaf commands run as tools",
-				path,
+				"a command that owns subcommands declares availability rules; only leaf commands run as tools",
 			)
 		}
-		for i, rule := range cmd.Availability {
-			if err := validateAvailabilityRule(path, i, rule, declared); err != nil {
-				return err
-			}
+		if len(cmd.Availability) > 0 {
+			checks.rulesByCmd[cmd] = cmd.Availability
 		}
 		for _, sub := range cmd.Subcommands {
-			if err := walk(path+" "+sub.Name, sub); err != nil {
+			if err := collect(sub); err != nil {
 				return err
 			}
 		}
 		return nil
 	}
 	for _, cmd := range app.Commands {
-		if err := walk(cmd.Name, cmd); err != nil {
+		if err := collect(cmd); err != nil {
+			return nil, err
+		}
+	}
+	return checks, nil
+}
+
+// availabilityChecks carries the validated availability declarations into
+// the shared command-tree walk: the declared condition names and the rules
+// declared per command (leaf commands only).
+type availabilityChecks struct {
+	declared   map[string]bool
+	rulesByCmd map[*Command][]*AvailabilityRule
+}
+
+// validateAvailabilityRules checks one command's declared rules against the
+// declared conditions. Called from validateCommand with the same path strings
+// the rest of the surface validation uses.
+func validateAvailabilityRules(path string, rules []*AvailabilityRule, declared map[string]bool) error {
+	for i, rule := range rules {
+		if err := validateAvailabilityRule(path, i, rule, declared); err != nil {
 			return err
 		}
 	}
@@ -204,7 +243,7 @@ func validateAvailabilityRule(path string, index int, rule *AvailabilityRule, de
 		return UsageErrorf("command %q availability rule %d is nil", path, index)
 	}
 	switch rule.Type {
-	case "enabledWhen", "requires", "disables":
+	case RuleEnabledWhen, RuleRequires, RuleDisables:
 		if rule.When == nil {
 			return UsageErrorf(
 				"command %q availability rule %d (%s) requires a condition expression",
@@ -214,30 +253,22 @@ func validateAvailabilityRule(path string, index int, rule *AvailabilityRule, de
 		if err := validateAvailabilityExpr(path, rule.When, declared); err != nil {
 			return err
 		}
-	case "anyOf":
+	case RuleAnyOf:
 		if len(rule.Rules) == 0 {
 			return UsageErrorf("command %q availability rule %d (anyOf) has no rules", path, index)
 		}
-		// All operands must gate the same tool: resolvedRules fills empty
-		// fields with the declaring command's tool, so operands that name
-		// different tools here would render an anyOf spanning two tools.
-		explicitField := ""
+		// All operands must gate the same tool. The consumer's composite
+		// constructors enforce this too, so validating here keeps the
+		// failure at the declaration site.
+		if err := validateSameField(path, index, "anyOf", rule.Rules); err != nil {
+			return err
+		}
 		for i, inner := range rule.Rules {
 			if err := validateAvailabilityRule(path, i, inner, declared); err != nil {
 				return err
 			}
-			if inner.Field != "" {
-				if explicitField == "" {
-					explicitField = inner.Field
-				} else if explicitField != inner.Field {
-					return UsageErrorf(
-						"command %q availability rule %d (anyOf) operands target different tools %q and %q",
-						path, index, explicitField, inner.Field,
-					)
-				}
-			}
 		}
-	case "eitherOf":
+	case RuleEitherOf:
 		if rule.Group == "" {
 			return UsageErrorf(
 				"command %q availability rule %d (eitherOf) requires a group name", path, index,
@@ -246,6 +277,7 @@ func validateAvailabilityRule(path string, index int, rule *AvailabilityRule, de
 		if len(rule.Branches) == 0 {
 			return UsageErrorf("command %q availability rule %d (eitherOf) has no branches", path, index)
 		}
+		var flat []*AvailabilityRule
 		for name, branch := range rule.Branches {
 			if name == "" {
 				return UsageErrorf(
@@ -257,11 +289,18 @@ func validateAvailabilityRule(path string, index int, rule *AvailabilityRule, de
 					"command %q availability rule %d (eitherOf) branch %q is empty", path, index, name,
 				)
 			}
+			flat = append(flat, branch...)
+		}
+		if err := validateSameField(path, index, "eitherOf", flat); err != nil {
+			return err
+		}
+		for name, branch := range rule.Branches {
 			for i, inner := range branch {
 				if err := validateAvailabilityRule(path, i, inner, declared); err != nil {
 					return err
 				}
 			}
+			_ = name
 		}
 	default:
 		return UsageErrorf(
@@ -276,7 +315,7 @@ func validateAvailabilityExpr(path string, expr *AvailabilityExpr, declared map[
 		return UsageErrorf("command %q availability expression is nil", path)
 	}
 	switch expr.Op {
-	case "cond", "condEq", "condIn":
+	case OpCond, OpCondEq, OpCondIn:
 		if expr.Condition == "" {
 			return UsageErrorf(
 				"command %q availability %q expression has no condition", path, expr.Op,
@@ -288,7 +327,7 @@ func validateAvailabilityExpr(path string, expr *AvailabilityExpr, declared map[
 				path, expr.Condition,
 			)
 		}
-	case "and", "or":
+	case OpAnd, OpOr:
 		if len(expr.Exprs) == 0 {
 			return UsageErrorf(
 				"command %q availability %q expression has no operands", path, expr.Op,
@@ -299,7 +338,7 @@ func validateAvailabilityExpr(path string, expr *AvailabilityExpr, declared map[
 				return err
 			}
 		}
-	case "not":
+	case OpNot:
 		if expr.Expr == nil {
 			return UsageErrorf("command %q availability not expression has no operand", path)
 		}
@@ -308,6 +347,30 @@ func validateAvailabilityExpr(path string, expr *AvailabilityExpr, declared map[
 		return UsageErrorf(
 			"command %q availability expression has unknown op %q", path, expr.Op,
 		)
+	}
+	return nil
+}
+
+// validateSameField enforces the composite contract all operands gate the
+// same tool: distinct explicit fields fail; empty fields inherit the
+// declaring command's tool and pass. The Umpire runtime panics on this
+// violation, so it is caught at the declaration site instead.
+func validateSameField(path string, index int, kind string, rules []*AvailabilityRule) error {
+	explicit := ""
+	for _, inner := range rules {
+		if inner == nil {
+			continue
+		}
+		if inner.Field != "" {
+			if explicit == "" {
+				explicit = inner.Field
+			} else if explicit != inner.Field {
+				return UsageErrorf(
+					"command %q availability rule %d (%s) operands target different tools %q and %q",
+					path, index, kind, explicit, inner.Field,
+				)
+			}
+		}
 	}
 	return nil
 }

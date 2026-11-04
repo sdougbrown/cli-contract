@@ -185,7 +185,8 @@ func UsageErrorf(format string, args ...any) *UsageError {
 // of repeats, and Handle/Raw are exclusive. Called by buildTree so drift
 // fails at startup on every entry point.
 func validate(app *App) error {
-	if err := validateAvailability(app); err != nil {
+	checks, err := validateAvailability(app)
+	if err != nil {
 		return err
 	}
 	commonNames := make(map[string]bool, len(app.CommonFlags))
@@ -199,7 +200,7 @@ func validate(app *App) error {
 		return err
 	}
 	for _, cmd := range app.Commands {
-		if err := validateCommand(cmd.Name, cmd, inherited, commonNames); err != nil {
+		if err := validateCommand(cmd.Name, cmd, inherited, commonNames, checks); err != nil {
 			return err
 		}
 	}
@@ -216,8 +217,10 @@ type surfaceFlag struct {
 
 // validateCommand checks one declared command and descends into its
 // subcommands, carrying the flag surface they inherit: the common flags and
-// every ancestor's persistent flags.
-func validateCommand(path string, c *Command, inherited []surfaceFlag, commonNames map[string]bool) error {
+// every ancestor's persistent flags. The availability checks ride the same
+// walk: rules declared on this command validate against the shared condition
+// set.
+func validateCommand(path string, c *Command, inherited []surfaceFlag, commonNames map[string]bool, checks *availabilityChecks) error {
 	if c.Short == "" {
 		return UsageErrorf("command %q has no help short", path)
 	}
@@ -225,6 +228,11 @@ func validateCommand(path string, c *Command, inherited []surfaceFlag, commonNam
 		// Only leaf commands run: a parent with subcommands fails with a
 		// caller error when invoked bare.
 		return UsageErrorf("command %q must declare exactly one of Handle or Raw", path)
+	}
+	if rules := checks.rulesByCmd[c]; len(rules) > 0 {
+		if err := validateAvailabilityRules(path, rules, checks.declared); err != nil {
+			return err
+		}
 	}
 	// The builder registers a command's persistent flags only when the
 	// command owns subcommands, and its plain flags only on a leaf; the
@@ -238,7 +246,7 @@ func validateCommand(path string, c *Command, inherited []surfaceFlag, commonNam
 		return err
 	}
 	for _, sub := range c.Subcommands {
-		if err := validateCommand(path+" "+sub.Name, sub, surface, commonNames); err != nil {
+		if err := validateCommand(path+" "+sub.Name, sub, surface, commonNames, checks); err != nil {
 			return err
 		}
 	}

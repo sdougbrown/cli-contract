@@ -50,10 +50,85 @@ type manifestShape struct {
 
 // availabilityShape is the registry-level availability block. Fields are
 // implicit (the consumer derives them from the tool set); the block carries
-// the declared conditions and the rules that gate tools.
+// the declared conditions and the rules that gate tools. The rule shapes are
+// local to this package — the wire contract must not move when the
+// declaration structs change.
 type availabilityShape struct {
-	Conditions map[string]conditionShape       `json:"conditions,omitempty"`
-	Rules      []*clicontract.AvailabilityRule `json:"rules,omitempty"`
+	Conditions map[string]conditionShape `json:"conditions,omitempty"`
+	Rules      []ruleShape               `json:"rules,omitempty"`
+}
+
+// ruleShape mirrors one Umpire availability rule on the wire.
+type ruleShape struct {
+	Type     string                 `json:"type"`
+	Field    string                 `json:"field,omitempty"`
+	Targets  []string               `json:"targets,omitempty"`
+	Group    string                 `json:"group,omitempty"`
+	When     *exprShape             `json:"when,omitempty"`
+	Reason   string                 `json:"reason,omitempty"`
+	Rules    []ruleShape            `json:"rules,omitempty"`
+	Branches map[string][]ruleShape `json:"branches,omitempty"`
+}
+
+// exprShape mirrors one Umpire condition expression on the wire.
+type exprShape struct {
+	Op        string      `json:"op"`
+	Condition string      `json:"condition,omitempty"`
+	Value     any         `json:"value,omitempty"`
+	Values    []any       `json:"values,omitempty"`
+	Exprs     []exprShape `json:"exprs,omitempty"`
+	Expr      *exprShape  `json:"expr,omitempty"`
+}
+
+func ruleShapeFrom(rule *clicontract.AvailabilityRule) ruleShape {
+	out := ruleShape{
+		Type:    rule.Type,
+		Field:   rule.Field,
+		Targets: rule.Targets,
+		Group:   rule.Group,
+		Reason:  rule.Reason,
+	}
+	if rule.When != nil {
+		when := exprShapeFrom(rule.When)
+		out.When = &when
+	}
+	if len(rule.Rules) > 0 {
+		out.Rules = make([]ruleShape, 0, len(rule.Rules))
+		for _, inner := range rule.Rules {
+			out.Rules = append(out.Rules, ruleShapeFrom(inner))
+		}
+	}
+	if len(rule.Branches) > 0 {
+		out.Branches = make(map[string][]ruleShape, len(rule.Branches))
+		for name, branch := range rule.Branches {
+			shapes := make([]ruleShape, 0, len(branch))
+			for _, inner := range branch {
+				shapes = append(shapes, ruleShapeFrom(inner))
+			}
+			out.Branches[name] = shapes
+		}
+	}
+	return out
+}
+
+func exprShapeFrom(expr *clicontract.AvailabilityExpr) exprShape {
+	out := exprShape{
+		Op:        expr.Op,
+		Condition: expr.Condition,
+		Value:     expr.Value,
+		Values:    expr.Values,
+	}
+	if len(expr.Exprs) > 0 {
+		out.Exprs = make([]exprShape, 0, len(expr.Exprs))
+		for _, inner := range expr.Exprs {
+			out.Exprs = append(out.Exprs, exprShapeFrom(inner))
+		}
+	}
+	if expr.Expr != nil {
+		inner := exprShapeFrom(expr.Expr)
+		out.Expr = &inner
+	}
+	return out
 }
 
 // conditionShape is one declared availability input.
@@ -117,7 +192,11 @@ func Manifest(app *clicontract.App, opts Options) ([]byte, error) {
 		for _, c := range app.AvailabilityConditions {
 			conditions[c.Name] = conditionShape{Type: c.Type, Description: c.Description}
 		}
-		availability = &availabilityShape{Conditions: conditions, Rules: rules}
+		shapes := make([]ruleShape, 0, len(rules))
+		for _, rule := range rules {
+			shapes = append(shapes, ruleShapeFrom(rule))
+		}
+		availability = &availabilityShape{Conditions: conditions, Rules: shapes}
 	}
 	b, err := json.MarshalIndent(manifestShape{Version: 1, Tools: tools, Availability: availability}, "", "  ")
 	if err != nil {
@@ -138,7 +217,7 @@ func resolvedRules(tool string, declared []*clicontract.AvailabilityRule) []*cli
 		out := *rule
 		// Only the field-targeting leaf forms carry a field; disables names
 		// its tools through targets, and composite wrappers stay bare.
-		if out.Field == "" && (out.Type == "enabledWhen" || out.Type == "requires") {
+		if out.Field == "" && (out.Type == clicontract.RuleEnabledWhen || out.Type == clicontract.RuleRequires) {
 			out.Field = tool
 		}
 		// Copy slice fields: a shallow struct copy would share Targets'
