@@ -156,6 +156,38 @@ when a flag has none). Compose the app's own contract facts
 around them (statuses, error codes, envelope fields) into the document your
 harnesses parse.
 
+## Availability
+
+Declare, per command, the Umpire rules that decide whether a consumer offers
+its tool, and the inputs those rules read:
+
+```go
+app := &clicontract.App{
+    AvailabilityConditions: []clicontract.Condition{
+        {Name: "read_only", Type: clicontract.ConditionBoolean, Description: "the profile is read-only"},
+    },
+    Commands: []*clicontract.Command{
+        {
+            Name:  "edit",
+            Short: "edit a thing",
+            Handle: handleEdit,
+            Availability: []*clicontract.AvailabilityRule{
+                // Rules without an explicit field gate their own tool;
+                // targets in a disables rule are command paths.
+                clicontract.Gate(clicontract.Not(clicontract.When("read_only")), "the profile is read-only"),
+            },
+        },
+    },
+}
+```
+
+Rule vocabulary: `Gate`/`GateOn` (enabledWhen), `Requires`/`RequiresOn`,
+`Disables`, `AnyOf`, `EitherOf`; expressions via `When`, `CondEq`, `CondIn`,
+`And`, `Or`, `Not`. The declarations validate at startup alongside the rest
+of the surface, and the [registry](registry/registry.go) package renders them
+into a cli-registry manifest's top-level availability block, which the
+consumer evaluates with [`umpire-go`](https://github.com/umpire-tools/umpire-go).
+
 ## Parse without running
 
 ```go

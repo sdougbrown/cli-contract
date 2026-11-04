@@ -126,6 +126,11 @@ type Command struct {
 	PersistentFlags []Flag
 	// Subcommands nest under this command (store path, store reset).
 	Subcommands []*Command
+	// Availability gates the command's tool in generated registry manifests:
+	// rules over the App's AvailabilityConditions. Only leaf commands can
+	// gate; a command with subcommands fails validation when it declares
+	// rules. Rules without an explicit Field apply to this command's tool.
+	Availability []*AvailabilityRule
 	// Handle runs the command and returns the result the adapter writes.
 	// Mutually exclusive with Raw.
 	Handle HandleFunc
@@ -163,6 +168,11 @@ type App struct {
 	RootLong    string
 	Commands    []*Command
 	CommonFlags []Flag
+	// AvailabilityConditions declares the inputs consumers supply when they
+	// evaluate the app's availability rules. Rendered into the generated
+	// manifest's availability block; rules referencing an undeclared
+	// condition fail validation at startup.
+	AvailabilityConditions []Condition
 }
 
 // UsageErrorf builds a UsageError with a formatted message.
@@ -175,6 +185,9 @@ func UsageErrorf(format string, args ...any) *UsageError {
 // of repeats, and Handle/Raw are exclusive. Called by buildTree so drift
 // fails at startup on every entry point.
 func validate(app *App) error {
+	if err := validateAvailability(app); err != nil {
+		return err
+	}
 	commonNames := make(map[string]bool, len(app.CommonFlags))
 	for _, f := range app.CommonFlags {
 		commonNames[f.Name] = true

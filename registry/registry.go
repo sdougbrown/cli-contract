@@ -9,6 +9,7 @@ package registry
 
 import (
 	"encoding/json"
+	"fmt"
 	"sort"
 	"strings"
 
@@ -42,8 +43,23 @@ type Binding struct {
 
 // manifestShape mirrors the cli-registry manifest's normative shape.
 type manifestShape struct {
-	Version int                  `json:"version"`
-	Tools   map[string]toolShape `json:"tools"`
+	Version      int                  `json:"version"`
+	Tools        map[string]toolShape `json:"tools"`
+	Availability *availabilityShape   `json:"availability,omitempty"`
+}
+
+// availabilityShape is the registry-level availability block. Fields are
+// implicit (the consumer derives them from the tool set); the block carries
+// the declared conditions and the rules that gate tools.
+type availabilityShape struct {
+	Conditions map[string]conditionShape       `json:"conditions,omitempty"`
+	Rules      []*clicontract.AvailabilityRule `json:"rules,omitempty"`
+}
+
+// conditionShape is one declared availability input.
+type conditionShape struct {
+	Type        string `json:"type"`
+	Description string `json:"description,omitempty"`
 }
 
 type toolShape struct {
@@ -58,12 +74,15 @@ type toolShape struct {
 // Manifest renders the declared commands as a cli-registry manifest,
 // deterministically (sorted tools, properties, and bindings). Nested
 // subcommands flatten to one tool per leaf ("store path" → "store-path").
+// Availability rules declared on commands render into the top-level
+// availability block; rules without an explicit field gate their own tool.
 func Manifest(app *clicontract.App, opts Options) ([]byte, error) {
 	timeout := opts.DefaultTimeout
 	if timeout == "" {
 		timeout = DefaultTimeout
 	}
 	tools := map[string]toolShape{}
+	var rules []*clicontract.AvailabilityRule
 	var walk func(path []string, cmd *clicontract.Command)
 	walk = func(path []string, cmd *clicontract.Command) {
 		if len(cmd.Subcommands) > 0 {
@@ -72,8 +91,10 @@ func Manifest(app *clicontract.App, opts Options) ([]byte, error) {
 			}
 			return
 		}
-		tools[toolName(app.Name, strings.Join(path, "-"))] = buildTool(
+		tool := toolName(app.Name, strings.Join(path, "-"))
+		tools[tool] = buildTool(
 			opts, timeout, app.Name, path, cmd, app.CommonFlags)
+		rules = append(rules, resolvedRules(tool, cmd.Availability)...)
 	}
 	for _, cmd := range app.Commands {
 		walk([]string{cmd.Name}, cmd)
@@ -86,11 +107,111 @@ func Manifest(app *clicontract.App, opts Options) ([]byte, error) {
 		t.Bindings = bindings
 		tools[name] = t
 	}
-	b, err := json.MarshalIndent(manifestShape{Version: 1, Tools: tools}, "", "  ")
+	rules, err := resolveTargets(app.Name, tools, rules)
+	if err != nil {
+		return nil, err
+	}
+	var availability *availabilityShape
+	if len(app.AvailabilityConditions) > 0 || len(rules) > 0 {
+		conditions := make(map[string]conditionShape, len(app.AvailabilityConditions))
+		for _, c := range app.AvailabilityConditions {
+			conditions[c.Name] = conditionShape{Type: c.Type, Description: c.Description}
+		}
+		availability = &availabilityShape{Conditions: conditions, Rules: rules}
+	}
+	b, err := json.MarshalIndent(manifestShape{Version: 1, Tools: tools, Availability: availability}, "", "  ")
 	if err != nil {
 		return nil, err
 	}
 	return append(b, '\n'), nil
+}
+
+// resolvedRules assigns a rule's field: an explicit Field passes through; an
+// empty Field takes the tool the rule was declared on (so anyOf operands and
+// eitherOf branches gate the declaring command without repeating its name).
+func resolvedRules(tool string, declared []*clicontract.AvailabilityRule) []*clicontract.AvailabilityRule {
+	if len(declared) == 0 {
+		return nil
+	}
+	var resolve func(rule *clicontract.AvailabilityRule) *clicontract.AvailabilityRule
+	resolve = func(rule *clicontract.AvailabilityRule) *clicontract.AvailabilityRule {
+		out := *rule
+		// Only the field-targeting leaf forms carry a field; disables names
+		// its tools through targets, and composite wrappers stay bare.
+		if out.Field == "" && (out.Type == "enabledWhen" || out.Type == "requires") {
+			out.Field = tool
+		}
+		if len(rule.Rules) > 0 {
+			out.Rules = nil
+			for _, inner := range rule.Rules {
+				out.Rules = append(out.Rules, resolve(inner))
+			}
+		}
+		if len(rule.Branches) > 0 {
+			out.Branches = make(map[string][]*clicontract.AvailabilityRule, len(rule.Branches))
+			for name, branch := range rule.Branches {
+				resolvedBranch := make([]*clicontract.AvailabilityRule, 0, len(branch))
+				for _, inner := range branch {
+					resolvedBranch = append(resolvedBranch, resolve(inner))
+				}
+				out.Branches[name] = resolvedBranch
+			}
+		}
+		return &out
+	}
+	out := make([]*clicontract.AvailabilityRule, 0, len(declared))
+	for _, rule := range declared {
+		out = append(out, resolve(rule))
+	}
+	return out
+}
+
+// resolveTargets rewrites a disables rule's targets from command paths
+// ("view") to tool names ("testcli-view"). A target that matches neither a
+// full tool name nor a declared command path is an error.
+func resolveTargets(appName string, tools map[string]toolShape, rules []*clicontract.AvailabilityRule) ([]*clicontract.AvailabilityRule, error) {
+	resolveOne := func(target string) (string, bool) {
+		if _, ok := tools[target]; ok {
+			return target, true
+		}
+		full := toolName(appName, target)
+		if _, ok := tools[full]; ok {
+			return full, true
+		}
+		return "", false
+	}
+	var walk func(rule *clicontract.AvailabilityRule) error
+	walk = func(rule *clicontract.AvailabilityRule) error {
+		for i, target := range rule.Targets {
+			resolved, ok := resolveOne(target)
+			if !ok {
+				return fmt.Errorf(
+					"availability rule targets %q, which matches no declared command path or tool name",
+					target,
+				)
+			}
+			rule.Targets[i] = resolved
+		}
+		for _, inner := range rule.Rules {
+			if err := walk(inner); err != nil {
+				return err
+			}
+		}
+		for _, branch := range rule.Branches {
+			for _, inner := range branch {
+				if err := walk(inner); err != nil {
+					return err
+				}
+			}
+		}
+		return nil
+	}
+	for _, rule := range rules {
+		if err := walk(rule); err != nil {
+			return nil, err
+		}
+	}
+	return rules, nil
 }
 
 // toolName joins the command path with dashes.
