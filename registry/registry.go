@@ -80,7 +80,7 @@ type exprShape struct {
 	Expr      *exprShape  `json:"expr,omitempty"`
 }
 
-func ruleShapeFrom(rule *clicontract.AvailabilityRule) ruleShape {
+func ruleShapeFrom(rule *clicontract.Rule) ruleShape {
 	out := ruleShape{
 		Type:    rule.Type,
 		Field:   rule.Field,
@@ -111,7 +111,7 @@ func ruleShapeFrom(rule *clicontract.AvailabilityRule) ruleShape {
 	return out
 }
 
-func exprShapeFrom(expr *clicontract.AvailabilityExpr) exprShape {
+func exprShapeFrom(expr *clicontract.Expr) exprShape {
 	out := exprShape{
 		Op:        expr.Op,
 		Condition: expr.Condition,
@@ -157,7 +157,7 @@ func Manifest(app *clicontract.App, opts Options) ([]byte, error) {
 		timeout = DefaultTimeout
 	}
 	tools := map[string]toolShape{}
-	var rules []*clicontract.AvailabilityRule
+	var rules []*clicontract.Rule
 	var walk func(path []string, cmd *clicontract.Command) error
 	walk = func(path []string, cmd *clicontract.Command) error {
 		if len(cmd.Subcommands) > 0 {
@@ -222,12 +222,12 @@ func Manifest(app *clicontract.App, opts Options) ([]byte, error) {
 // resolvedRules assigns a rule's field: an explicit Field passes through; an
 // empty Field takes the tool the rule was declared on (so anyOf operands and
 // eitherOf branches gate the declaring command without repeating its name).
-func resolvedRules(tool string, declared []*clicontract.AvailabilityRule) []*clicontract.AvailabilityRule {
+func resolvedRules(tool string, declared []*clicontract.Rule) []*clicontract.Rule {
 	if len(declared) == 0 {
 		return nil
 	}
-	var resolve func(rule *clicontract.AvailabilityRule) *clicontract.AvailabilityRule
-	resolve = func(rule *clicontract.AvailabilityRule) *clicontract.AvailabilityRule {
+	var resolve func(rule *clicontract.Rule) *clicontract.Rule
+	resolve = func(rule *clicontract.Rule) *clicontract.Rule {
 		out := *rule
 		// Only the field-targeting leaf forms carry a field; disables names
 		// its tools through targets, and composite wrappers stay bare.
@@ -247,9 +247,9 @@ func resolvedRules(tool string, declared []*clicontract.AvailabilityRule) []*cli
 			}
 		}
 		if len(rule.Branches) > 0 {
-			out.Branches = make(map[string][]*clicontract.AvailabilityRule, len(rule.Branches))
+			out.Branches = make(map[string][]*clicontract.Rule, len(rule.Branches))
 			for name, branch := range rule.Branches {
-				resolvedBranch := make([]*clicontract.AvailabilityRule, 0, len(branch))
+				resolvedBranch := make([]*clicontract.Rule, 0, len(branch))
 				for _, inner := range branch {
 					resolvedBranch = append(resolvedBranch, resolve(inner))
 				}
@@ -258,7 +258,7 @@ func resolvedRules(tool string, declared []*clicontract.AvailabilityRule) []*cli
 		}
 		return &out
 	}
-	out := make([]*clicontract.AvailabilityRule, 0, len(declared))
+	out := make([]*clicontract.Rule, 0, len(declared))
 	for _, rule := range declared {
 		out = append(out, resolve(rule))
 	}
@@ -272,10 +272,10 @@ func resolvedRules(tool string, declared []*clicontract.AvailabilityRule) []*cli
 // tools — a mismatch the declaration-time check cannot see when explicit and
 // inherited fields mix. Without this, the consumer's composite constructors
 // panic on the rendered manifest.
-func validateResolvedConsistency(rules []*clicontract.AvailabilityRule) error {
-	var walk func(rule *clicontract.AvailabilityRule) error
-	walk = func(rule *clicontract.AvailabilityRule) error {
-		var operands []*clicontract.AvailabilityRule
+func validateResolvedConsistency(rules []*clicontract.Rule) error {
+	var walk func(rule *clicontract.Rule) error
+	walk = func(rule *clicontract.Rule) error {
+		var operands []*clicontract.Rule
 		switch rule.Type {
 		case clicontract.RuleAnyOf:
 			operands = rule.Rules
@@ -316,7 +316,7 @@ func validateResolvedConsistency(rules []*clicontract.AvailabilityRule) error {
 // resolveTargets rewrites a disables rule's targets from command paths
 // ("view") to tool names ("testcli-view"). A target that matches neither a
 // full tool name nor a declared command path is an error.
-func resolveTargets(appName string, tools map[string]toolShape, rules []*clicontract.AvailabilityRule) ([]*clicontract.AvailabilityRule, error) {
+func resolveTargets(appName string, tools map[string]toolShape, rules []*clicontract.Rule) ([]*clicontract.Rule, error) {
 	resolveOne := func(target string) (string, bool) {
 		if _, ok := tools[target]; ok {
 			return target, true
@@ -327,8 +327,8 @@ func resolveTargets(appName string, tools map[string]toolShape, rules []*clicont
 		}
 		return "", false
 	}
-	var walk func(rule *clicontract.AvailabilityRule) error
-	walk = func(rule *clicontract.AvailabilityRule) error {
+	var walk func(rule *clicontract.Rule) error
+	walk = func(rule *clicontract.Rule) error {
 		for i, target := range rule.Targets {
 			resolved, ok := resolveOne(target)
 			if !ok {

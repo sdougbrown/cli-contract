@@ -171,7 +171,7 @@ app := &clicontract.App{
             Name:  "edit",
             Short: "edit a thing",
             Handle: handleEdit,
-            Availability: []*clicontract.AvailabilityRule{
+            Availability: []*clicontract.Rule{
                 // Rules without an explicit field gate their own tool;
                 // targets in a disables rule are command paths.
                 clicontract.Gate(clicontract.Not(clicontract.When("read_only")), "the profile is read-only"),

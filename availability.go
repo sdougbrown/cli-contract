@@ -45,10 +45,10 @@ type Condition struct {
 	Description string
 }
 
-// AvailabilityExpr is a condition expression inside an availability rule.
+// Expr is a condition expression inside an availability rule.
 // Build expressions with When, CondEq, CondIn, And, Or, and Not; the zero
 // value is not valid.
-type AvailabilityExpr struct {
+type Expr struct {
 	// Op is one of "cond", "condEq", "condIn", "and", "or", "not".
 	Op string `json:"op"`
 	// Condition names a declared Condition (cond, condEq, condIn).
@@ -58,16 +58,16 @@ type AvailabilityExpr struct {
 	// Values are the membership values (condIn).
 	Values []any `json:"values,omitempty"`
 	// Exprs are the operands (and, or).
-	Exprs []*AvailabilityExpr `json:"exprs,omitempty"`
+	Exprs []*Expr `json:"exprs,omitempty"`
 	// Expr is the operand (not).
-	Expr *AvailabilityExpr `json:"expr,omitempty"`
+	Expr *Expr `json:"expr,omitempty"`
 }
 
-// AvailabilityRule gates a command's availability. Build rules with Gate,
+// Rule gates a command's availability. Build rules with Gate,
 // GateOn, Requires, RequiresOn, Disables, AnyOf, and EitherOf. A rule
 // declared on a command applies to that command's tool unless the rule names
 // an explicit Field.
-type AvailabilityRule struct {
+type Rule struct {
 	// Type is one of "enabledWhen", "requires", "disables", "anyOf",
 	// "eitherOf".
 	Type string `json:"type"`
@@ -79,93 +79,93 @@ type AvailabilityRule struct {
 	// Group names an eitherOf rule; required for eitherOf.
 	Group string `json:"group,omitempty"`
 	// When is the rule's condition expression (every type but anyOf).
-	When *AvailabilityExpr `json:"when,omitempty"`
+	When *Expr `json:"when,omitempty"`
 	// Reason is reported when the rule fails. Each type carries a default.
 	Reason string `json:"reason,omitempty"`
 	// Rules are the operands (anyOf).
-	Rules []*AvailabilityRule `json:"rules,omitempty"`
+	Rules []*Rule `json:"rules,omitempty"`
 	// Branches are the operands (eitherOf).
-	Branches map[string][]*AvailabilityRule `json:"branches,omitempty"`
+	Branches map[string][]*Rule `json:"branches,omitempty"`
 }
 
 // When references a declared boolean condition.
-func When(condition string) *AvailabilityExpr {
-	return &AvailabilityExpr{Op: OpCond, Condition: condition}
+func When(condition string) *Expr {
+	return &Expr{Op: OpCond, Condition: condition}
 }
 
 // CondEq compares a condition against a value.
-func CondEq(condition string, value any) *AvailabilityExpr {
-	return &AvailabilityExpr{Op: OpCondEq, Condition: condition, Value: value}
+func CondEq(condition string, value any) *Expr {
+	return &Expr{Op: OpCondEq, Condition: condition, Value: value}
 }
 
 // CondIn tests condition membership.
-func CondIn(condition string, values ...any) *AvailabilityExpr {
-	return &AvailabilityExpr{Op: OpCondIn, Condition: condition, Values: values}
+func CondIn(condition string, values ...any) *Expr {
+	return &Expr{Op: OpCondIn, Condition: condition, Values: values}
 }
 
 // And requires every operand to pass.
-func And(exprs ...*AvailabilityExpr) *AvailabilityExpr {
-	return &AvailabilityExpr{Op: OpAnd, Exprs: exprs}
+func And(exprs ...*Expr) *Expr {
+	return &Expr{Op: OpAnd, Exprs: exprs}
 }
 
 // Or passes when any operand passes.
-func Or(exprs ...*AvailabilityExpr) *AvailabilityExpr {
-	return &AvailabilityExpr{Op: OpOr, Exprs: exprs}
+func Or(exprs ...*Expr) *Expr {
+	return &Expr{Op: OpOr, Exprs: exprs}
 }
 
 // Not negates its operand.
-func Not(expr *AvailabilityExpr) *AvailabilityExpr {
-	return &AvailabilityExpr{Op: OpNot, Expr: expr}
+func Not(expr *Expr) *Expr {
+	return &Expr{Op: OpNot, Expr: expr}
 }
 
 // Gate enables the declaring command's tool only when the expression passes.
 // An empty reason takes the default "condition not met".
-func Gate(when *AvailabilityExpr, reason string) *AvailabilityRule {
+func Gate(when *Expr, reason string) *Rule {
 	return gateRule("", RuleEnabledWhen, when, reason, "condition not met")
 }
 
 // GateOn is Gate targeting an explicitly named tool.
-func GateOn(field string, when *AvailabilityExpr, reason string) *AvailabilityRule {
+func GateOn(field string, when *Expr, reason string) *Rule {
 	return gateRule(field, RuleEnabledWhen, when, reason, "condition not met")
 }
 
 // Requires keeps the declaring command's tool gated until the condition is
 // met. An empty reason takes the default "required condition not met".
-func Requires(when *AvailabilityExpr, reason string) *AvailabilityRule {
+func Requires(when *Expr, reason string) *Rule {
 	return gateRule("", RuleRequires, when, reason, "required condition not met")
 }
 
 // RequiresOn is Requires targeting an explicitly named tool.
-func RequiresOn(field string, when *AvailabilityExpr, reason string) *AvailabilityRule {
+func RequiresOn(field string, when *Expr, reason string) *Rule {
 	return gateRule(field, RuleRequires, when, reason, "required condition not met")
 }
 
-func gateRule(field, ruleType string, when *AvailabilityExpr, reason, defaultReason string) *AvailabilityRule {
+func gateRule(field, ruleType string, when *Expr, reason, defaultReason string) *Rule {
 	if reason == "" {
 		reason = defaultReason
 	}
-	return &AvailabilityRule{Type: ruleType, Field: field, When: when, Reason: reason}
+	return &Rule{Type: ruleType, Field: field, When: when, Reason: reason}
 }
 
 // Disables turns the named tools off while the condition holds. An empty
 // reason takes the default "overridden by condition".
-func Disables(targets []string, when *AvailabilityExpr, reason string) *AvailabilityRule {
+func Disables(targets []string, when *Expr, reason string) *Rule {
 	if reason == "" {
 		reason = "overridden by condition"
 	}
-	return &AvailabilityRule{Type: RuleDisables, Targets: targets, When: when, Reason: reason}
+	return &Rule{Type: RuleDisables, Targets: targets, When: when, Reason: reason}
 }
 
 // AnyOf passes when any operand rule passes; all operands must target the
 // same tool (an empty field on every operand takes the declaring command's).
-func AnyOf(rules ...*AvailabilityRule) *AvailabilityRule {
-	return &AvailabilityRule{Type: RuleAnyOf, Rules: rules}
+func AnyOf(rules ...*Rule) *Rule {
+	return &Rule{Type: RuleAnyOf, Rules: rules}
 }
 
 // EitherOf passes when any branch's rules all pass. The group names the
 // choice in the rendered manifest and in consumer diagnostics.
-func EitherOf(group string, branches map[string][]*AvailabilityRule) *AvailabilityRule {
-	return &AvailabilityRule{Type: RuleEitherOf, Group: group, Branches: branches}
+func EitherOf(group string, branches map[string][]*Rule) *Rule {
+	return &Rule{Type: RuleEitherOf, Group: group, Branches: branches}
 }
 
 // validateAvailability checks the app's availability declarations: known
@@ -196,7 +196,7 @@ func validateAvailability(app *App) (*availabilityChecks, error) {
 
 	checks := &availabilityChecks{
 		declared:   declared,
-		rulesByCmd: map[*Command][]*AvailabilityRule{},
+		rulesByCmd: map[*Command][]*Rule{},
 		toolNames:  map[string]bool{},
 	}
 	var collect func(path string, cmd *Command) error
@@ -241,7 +241,7 @@ func ToolName(name, path string) string {
 // walk completes.
 type availabilityChecks struct {
 	declared   map[string]bool
-	rulesByCmd map[*Command][]*AvailabilityRule
+	rulesByCmd map[*Command][]*Rule
 	toolNames  map[string]bool
 	fieldRefs  []fieldRef
 }
@@ -258,7 +258,7 @@ type fieldRef struct {
 // declared conditions and records explicit field references for resolution
 // after the walk. Called from validateCommand with the same path strings the
 // rest of the surface validation uses.
-func validateAvailabilityRules(path string, rules []*AvailabilityRule, checks *availabilityChecks) error {
+func validateAvailabilityRules(path string, rules []*Rule, checks *availabilityChecks) error {
 	for i, rule := range rules {
 		if err := validateAvailabilityRule(path, i, rule, checks.declared); err != nil {
 			return err
@@ -270,7 +270,7 @@ func validateAvailabilityRules(path string, rules []*AvailabilityRule, checks *a
 	return nil
 }
 
-func validateAvailabilityRule(path string, index int, rule *AvailabilityRule, declared map[string]bool) error {
+func validateAvailabilityRule(path string, index int, rule *Rule, declared map[string]bool) error {
 	if rule == nil {
 		return UsageErrorf("command %q availability rule %d is nil", path, index)
 	}
@@ -315,7 +315,7 @@ func validateAvailabilityRule(path string, index int, rule *AvailabilityRule, de
 		if len(rule.Branches) == 0 {
 			return UsageErrorf("command %q availability rule %d (eitherOf) has no branches", path, index)
 		}
-		var flat []*AvailabilityRule
+		var flat []*Rule
 		for name, branch := range rule.Branches {
 			if name == "" {
 				return UsageErrorf(
@@ -347,7 +347,7 @@ func validateAvailabilityRule(path string, index int, rule *AvailabilityRule, de
 	return nil
 }
 
-func validateAvailabilityExpr(path string, expr *AvailabilityExpr, declared map[string]bool) error {
+func validateAvailabilityExpr(path string, expr *Expr, declared map[string]bool) error {
 	if expr == nil {
 		return UsageErrorf("command %q availability expression is nil", path)
 	}
@@ -392,7 +392,7 @@ func validateAvailabilityExpr(path string, expr *AvailabilityExpr, declared map[
 // same tool: distinct explicit fields fail; empty fields inherit the
 // declaring command's tool and pass. The Umpire runtime panics on this
 // violation, so it is caught at the declaration site instead.
-func validateSameField(path string, index int, kind string, rules []*AvailabilityRule) error {
+func validateSameField(path string, index int, kind string, rules []*Rule) error {
 	explicit := ""
 	for _, inner := range rules {
 		if inner == nil {
