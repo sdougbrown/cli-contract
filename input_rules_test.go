@@ -2,6 +2,7 @@ package clicontract
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"reflect"
@@ -259,4 +260,55 @@ func TestInputRulesNameInheritedFlags(t *testing.T) {
 		RequiresOn("force", Present("sockett"), "a typo"),
 	}
 	expectDeclarationPanic(t, app, `references unknown flag "sockett"`)
+}
+
+// TestSchemaRendersInputRules pins the rules' place and shape in the schema
+// document: beside the flag schemas, in the Umpire wire vocabulary.
+func TestSchemaRendersInputRules(t *testing.T) {
+	app := inputRulesApp()
+	app.Commands[0].InputRules = []*Rule{
+		RequiresOn("roster-file", Present("roster-entry"), "a roster file needs an entry"),
+		RequiresOn("prompt-file", Absent("prompt"), "cannot combine"),
+	}
+
+	b, err := json.Marshal(app.Schemas()["run"])
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got map[string]any
+	if err := json.Unmarshal(b, &got); err != nil {
+		t.Fatal(err)
+	}
+
+	want := []any{
+		map[string]any{
+			"type":   "requires",
+			"field":  "roster-file",
+			"reason": "a roster file needs an entry",
+			"when":   map[string]any{"op": "present", "field": "roster-entry"},
+		},
+		map[string]any{
+			"type":   "requires",
+			"field":  "prompt-file",
+			"reason": "cannot combine",
+			"when":   map[string]any{"op": "absent", "field": "prompt"},
+		},
+	}
+	if !reflect.DeepEqual(got["inputRules"], want) {
+		t.Errorf("inputRules = %#v, want %#v", got["inputRules"], want)
+	}
+	if _, ok := got["flags"].(map[string]any); !ok {
+		t.Errorf("flags missing from the same entry: %#v", got)
+	}
+
+	// A command without rules omits the key rather than rendering an empty
+	// list.
+	app.Commands[0].InputRules = nil
+	b, err = json.Marshal(app.Schemas()["run"])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(b), "inputRules") {
+		t.Errorf("schema without rules should omit inputRules: %s", b)
+	}
 }

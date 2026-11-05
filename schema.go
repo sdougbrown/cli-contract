@@ -16,13 +16,14 @@ type FlagSchema struct {
 }
 
 // CommandSchema describes one command as data: its help short, its Use
-// string, whether it takes a URL positional, its flags, and (for nested
-// commands) its subcommands.
+// string, whether it takes a URL positional, its flags, its input rules, and
+// (for nested commands) its subcommands.
 type CommandSchema struct {
 	Short       string                   `json:"short"`
 	Use         string                   `json:"use"`
 	URL         bool                     `json:"url_positional"`
 	Flags       map[string]FlagSchema    `json:"flags,omitempty"`
+	InputRules  []Rule                   `json:"inputRules,omitempty"`
 	Subcommands map[string]CommandSchema `json:"subcommands,omitempty"`
 }
 
@@ -78,13 +79,31 @@ func flagsSchema(flags []Flag) map[string]FlagSchema {
 	return out
 }
 
+// ruleValues renders a declared rule list as data. Values rather than pointers
+// keep the rendered document detached from the declaration the way FlagSchema
+// does.
+func ruleValues(rules []*Rule) []Rule {
+	if len(rules) == 0 {
+		return nil
+	}
+	out := make([]Rule, 0, len(rules))
+	for _, rule := range rules {
+		if rule == nil {
+			continue // rejected at startup; skip rather than panic here
+		}
+		out = append(out, *rule)
+	}
+	return out
+}
+
 // Schema renders one command's schema entry, nested subcommands included.
 func (c *Command) Schema() CommandSchema {
 	entry := CommandSchema{
-		Short: c.Short,
-		Use:   commandUse(c),
-		URL:   hasURLPositional(c),
-		Flags: flagsSchema(c.Flags),
+		Short:      c.Short,
+		Use:        commandUse(c),
+		URL:        hasURLPositional(c),
+		Flags:      flagsSchema(c.Flags),
+		InputRules: ruleValues(c.InputRules),
 	}
 	if len(c.Subcommands) > 0 {
 		entry.URL = false
