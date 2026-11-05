@@ -9,6 +9,7 @@ package registry
 
 import (
 	"encoding/json"
+	"fmt"
 	"sort"
 	"strings"
 
@@ -42,8 +43,98 @@ type Binding struct {
 
 // manifestShape mirrors the cli-registry manifest's normative shape.
 type manifestShape struct {
-	Version int                  `json:"version"`
-	Tools   map[string]toolShape `json:"tools"`
+	Version      int                  `json:"version"`
+	Tools        map[string]toolShape `json:"tools"`
+	Availability *availabilityShape   `json:"availability,omitempty"`
+}
+
+// availabilityShape is the registry-level availability block. Fields are
+// implicit (the consumer derives them from the tool set); the block carries
+// the declared conditions and the rules that gate tools. The rule shapes are
+// local to this package — the wire contract must not move when the
+// declaration structs change.
+type availabilityShape struct {
+	Conditions map[string]conditionShape `json:"conditions,omitempty"`
+	Rules      []ruleShape               `json:"rules,omitempty"`
+}
+
+// ruleShape mirrors one Umpire availability rule on the wire.
+type ruleShape struct {
+	Type     string                 `json:"type"`
+	Field    string                 `json:"field,omitempty"`
+	Targets  []string               `json:"targets,omitempty"`
+	Group    string                 `json:"group,omitempty"`
+	When     *exprShape             `json:"when,omitempty"`
+	Reason   string                 `json:"reason,omitempty"`
+	Rules    []ruleShape            `json:"rules,omitempty"`
+	Branches map[string][]ruleShape `json:"branches,omitempty"`
+}
+
+// exprShape mirrors one Umpire condition expression on the wire.
+type exprShape struct {
+	Op        string      `json:"op"`
+	Condition string      `json:"condition,omitempty"`
+	Value     any         `json:"value,omitempty"`
+	Values    []any       `json:"values,omitempty"`
+	Exprs     []exprShape `json:"exprs,omitempty"`
+	Expr      *exprShape  `json:"expr,omitempty"`
+}
+
+func ruleShapeFrom(rule *clicontract.AvailabilityRule) ruleShape {
+	out := ruleShape{
+		Type:    rule.Type,
+		Field:   rule.Field,
+		Targets: rule.Targets,
+		Group:   rule.Group,
+		Reason:  rule.Reason,
+	}
+	if rule.When != nil {
+		when := exprShapeFrom(rule.When)
+		out.When = &when
+	}
+	if len(rule.Rules) > 0 {
+		out.Rules = make([]ruleShape, 0, len(rule.Rules))
+		for _, inner := range rule.Rules {
+			out.Rules = append(out.Rules, ruleShapeFrom(inner))
+		}
+	}
+	if len(rule.Branches) > 0 {
+		out.Branches = make(map[string][]ruleShape, len(rule.Branches))
+		for name, branch := range rule.Branches {
+			shapes := make([]ruleShape, 0, len(branch))
+			for _, inner := range branch {
+				shapes = append(shapes, ruleShapeFrom(inner))
+			}
+			out.Branches[name] = shapes
+		}
+	}
+	return out
+}
+
+func exprShapeFrom(expr *clicontract.AvailabilityExpr) exprShape {
+	out := exprShape{
+		Op:        expr.Op,
+		Condition: expr.Condition,
+		Value:     expr.Value,
+		Values:    expr.Values,
+	}
+	if len(expr.Exprs) > 0 {
+		out.Exprs = make([]exprShape, 0, len(expr.Exprs))
+		for _, inner := range expr.Exprs {
+			out.Exprs = append(out.Exprs, exprShapeFrom(inner))
+		}
+	}
+	if expr.Expr != nil {
+		inner := exprShapeFrom(expr.Expr)
+		out.Expr = &inner
+	}
+	return out
+}
+
+// conditionShape is one declared availability input.
+type conditionShape struct {
+	Type        string `json:"type"`
+	Description string `json:"description,omitempty"`
 }
 
 type toolShape struct {
@@ -58,25 +149,41 @@ type toolShape struct {
 // Manifest renders the declared commands as a cli-registry manifest,
 // deterministically (sorted tools, properties, and bindings). Nested
 // subcommands flatten to one tool per leaf ("store path" → "store-path").
+// Availability rules declared on commands render into the top-level
+// availability block; rules without an explicit field gate their own tool.
 func Manifest(app *clicontract.App, opts Options) ([]byte, error) {
 	timeout := opts.DefaultTimeout
 	if timeout == "" {
 		timeout = DefaultTimeout
 	}
 	tools := map[string]toolShape{}
-	var walk func(path []string, cmd *clicontract.Command)
-	walk = func(path []string, cmd *clicontract.Command) {
+	var rules []*clicontract.AvailabilityRule
+	var walk func(path []string, cmd *clicontract.Command) error
+	walk = func(path []string, cmd *clicontract.Command) error {
 		if len(cmd.Subcommands) > 0 {
-			for _, sub := range cmd.Subcommands {
-				walk(append(path, sub.Name), sub)
+			if len(cmd.Availability) > 0 {
+				return fmt.Errorf(
+					"command %q declares availability rules but owns subcommands; only leaf commands run as tools",
+					strings.Join(path, " "),
+				)
 			}
-			return
+			for _, sub := range cmd.Subcommands {
+				if err := walk(append(path, sub.Name), sub); err != nil {
+					return err
+				}
+			}
+			return nil
 		}
-		tools[toolName(app.Name, strings.Join(path, "-"))] = buildTool(
+		tool := clicontract.ToolName(app.Name, strings.Join(path, "-"))
+		tools[tool] = buildTool(
 			opts, timeout, app.Name, path, cmd, app.CommonFlags)
+		rules = append(rules, resolvedRules(tool, cmd.Availability)...)
+		return nil
 	}
 	for _, cmd := range app.Commands {
-		walk([]string{cmd.Name}, cmd)
+		if err := walk([]string{cmd.Name}, cmd); err != nil {
+			return nil, err
+		}
 	}
 	for name, t := range tools {
 		bindings := t.Bindings
@@ -86,16 +193,172 @@ func Manifest(app *clicontract.App, opts Options) ([]byte, error) {
 		t.Bindings = bindings
 		tools[name] = t
 	}
-	b, err := json.MarshalIndent(manifestShape{Version: 1, Tools: tools}, "", "  ")
+	rules, err := resolveTargets(app.Name, tools, rules)
+	if err != nil {
+		return nil, err
+	}
+	if err := validateResolvedConsistency(rules); err != nil {
+		return nil, err
+	}
+	var availability *availabilityShape
+	if len(app.AvailabilityConditions) > 0 || len(rules) > 0 {
+		conditions := make(map[string]conditionShape, len(app.AvailabilityConditions))
+		for _, c := range app.AvailabilityConditions {
+			conditions[c.Name] = conditionShape{Type: c.Type, Description: c.Description}
+		}
+		shapes := make([]ruleShape, 0, len(rules))
+		for _, rule := range rules {
+			shapes = append(shapes, ruleShapeFrom(rule))
+		}
+		availability = &availabilityShape{Conditions: conditions, Rules: shapes}
+	}
+	b, err := json.MarshalIndent(manifestShape{Version: 1, Tools: tools, Availability: availability}, "", "  ")
 	if err != nil {
 		return nil, err
 	}
 	return append(b, '\n'), nil
 }
 
-// toolName joins the command path with dashes.
-func toolName(prefix, name string) string {
-	return strings.ReplaceAll(prefix+" "+name, " ", "-")
+// resolvedRules assigns a rule's field: an explicit Field passes through; an
+// empty Field takes the tool the rule was declared on (so anyOf operands and
+// eitherOf branches gate the declaring command without repeating its name).
+func resolvedRules(tool string, declared []*clicontract.AvailabilityRule) []*clicontract.AvailabilityRule {
+	if len(declared) == 0 {
+		return nil
+	}
+	var resolve func(rule *clicontract.AvailabilityRule) *clicontract.AvailabilityRule
+	resolve = func(rule *clicontract.AvailabilityRule) *clicontract.AvailabilityRule {
+		out := *rule
+		// Only the field-targeting leaf forms carry a field; disables names
+		// its tools through targets, and composite wrappers stay bare.
+		if out.Field == "" && (out.Type == clicontract.RuleEnabledWhen || out.Type == clicontract.RuleRequires) {
+			out.Field = tool
+		}
+		// Copy slice fields: a shallow struct copy would share Targets'
+		// backing array with the caller's declaration, and resolveTargets
+		// rewrites targets in place — the App must stay untouched.
+		if len(rule.Targets) > 0 {
+			out.Targets = append([]string(nil), rule.Targets...)
+		}
+		if len(rule.Rules) > 0 {
+			out.Rules = nil
+			for _, inner := range rule.Rules {
+				out.Rules = append(out.Rules, resolve(inner))
+			}
+		}
+		if len(rule.Branches) > 0 {
+			out.Branches = make(map[string][]*clicontract.AvailabilityRule, len(rule.Branches))
+			for name, branch := range rule.Branches {
+				resolvedBranch := make([]*clicontract.AvailabilityRule, 0, len(branch))
+				for _, inner := range branch {
+					resolvedBranch = append(resolvedBranch, resolve(inner))
+				}
+				out.Branches[name] = resolvedBranch
+			}
+		}
+		return &out
+	}
+	out := make([]*clicontract.AvailabilityRule, 0, len(declared))
+	for _, rule := range declared {
+		out = append(out, resolve(rule))
+	}
+	return out
+}
+
+// validateResolvedConsistency enforces the composite contract on fully
+// resolved rules: every anyOf/eitherOf operand gates exactly one tool. After
+// resolution an operand's field is always set (empty took the declaring
+// command's tool), so distinct fields here mean the composite spans two
+// tools — a mismatch the declaration-time check cannot see when explicit and
+// inherited fields mix. Without this, the consumer's composite constructors
+// panic on the rendered manifest.
+func validateResolvedConsistency(rules []*clicontract.AvailabilityRule) error {
+	var walk func(rule *clicontract.AvailabilityRule) error
+	walk = func(rule *clicontract.AvailabilityRule) error {
+		var operands []*clicontract.AvailabilityRule
+		switch rule.Type {
+		case clicontract.RuleAnyOf:
+			operands = rule.Rules
+		case clicontract.RuleEitherOf:
+			for _, branch := range rule.Branches {
+				operands = append(operands, branch...)
+			}
+		default:
+			return nil
+		}
+		seen := ""
+		for _, inner := range operands {
+			if err := walk(inner); err != nil {
+				return err
+			}
+			if inner.Field == "" {
+				continue
+			}
+			if seen == "" {
+				seen = inner.Field
+			} else if seen != inner.Field {
+				return fmt.Errorf(
+					"%s rules must target the same fields; resolved operands name %q and %q",
+					rule.Type, seen, inner.Field,
+				)
+			}
+		}
+		return nil
+	}
+	for _, rule := range rules {
+		if err := walk(rule); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// resolveTargets rewrites a disables rule's targets from command paths
+// ("view") to tool names ("testcli-view"). A target that matches neither a
+// full tool name nor a declared command path is an error.
+func resolveTargets(appName string, tools map[string]toolShape, rules []*clicontract.AvailabilityRule) ([]*clicontract.AvailabilityRule, error) {
+	resolveOne := func(target string) (string, bool) {
+		if _, ok := tools[target]; ok {
+			return target, true
+		}
+		full := clicontract.ToolName(appName, target)
+		if _, ok := tools[full]; ok {
+			return full, true
+		}
+		return "", false
+	}
+	var walk func(rule *clicontract.AvailabilityRule) error
+	walk = func(rule *clicontract.AvailabilityRule) error {
+		for i, target := range rule.Targets {
+			resolved, ok := resolveOne(target)
+			if !ok {
+				return fmt.Errorf(
+					"availability rule targets %q, which matches no declared command path or tool name",
+					target,
+				)
+			}
+			rule.Targets[i] = resolved
+		}
+		for _, inner := range rule.Rules {
+			if err := walk(inner); err != nil {
+				return err
+			}
+		}
+		for _, branch := range rule.Branches {
+			for _, inner := range branch {
+				if err := walk(inner); err != nil {
+					return err
+				}
+			}
+		}
+		return nil
+	}
+	for _, rule := range rules {
+		if err := walk(rule); err != nil {
+			return nil, err
+		}
+	}
+	return rules, nil
 }
 
 // buildTool renders one leaf command as a tool.

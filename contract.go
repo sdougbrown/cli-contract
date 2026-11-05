@@ -126,6 +126,11 @@ type Command struct {
 	PersistentFlags []Flag
 	// Subcommands nest under this command (store path, store reset).
 	Subcommands []*Command
+	// Availability gates the command's tool in generated registry manifests:
+	// rules over the App's AvailabilityConditions. Only leaf commands can
+	// gate; a command with subcommands fails validation when it declares
+	// rules. Rules without an explicit Field apply to this command's tool.
+	Availability []*AvailabilityRule
 	// Handle runs the command and returns the result the adapter writes.
 	// Mutually exclusive with Raw.
 	Handle HandleFunc
@@ -163,6 +168,11 @@ type App struct {
 	RootLong    string
 	Commands    []*Command
 	CommonFlags []Flag
+	// AvailabilityConditions declares the inputs consumers supply when they
+	// evaluate the app's availability rules. Rendered into the generated
+	// manifest's availability block; rules referencing an undeclared
+	// condition fail validation at startup.
+	AvailabilityConditions []Condition
 }
 
 // UsageErrorf builds a UsageError with a formatted message.
@@ -175,6 +185,10 @@ func UsageErrorf(format string, args ...any) *UsageError {
 // of repeats, and Handle/Raw are exclusive. Called by buildTree so drift
 // fails at startup on every entry point.
 func validate(app *App) error {
+	checks, err := validateAvailability(app)
+	if err != nil {
+		return err
+	}
 	commonNames := make(map[string]bool, len(app.CommonFlags))
 	for _, f := range app.CommonFlags {
 		commonNames[f.Name] = true
@@ -186,8 +200,16 @@ func validate(app *App) error {
 		return err
 	}
 	for _, cmd := range app.Commands {
-		if err := validateCommand(cmd.Name, cmd, inherited, commonNames); err != nil {
+		if err := validateCommand(cmd.Name, cmd, inherited, commonNames, checks); err != nil {
 			return err
+		}
+	}
+	for _, ref := range checks.fieldRefs {
+		if !checks.toolNames[ref.field] {
+			return UsageErrorf(
+				"command %q availability rule %d targets unknown tool %q",
+				ref.path, ref.index, ref.field,
+			)
 		}
 	}
 	return nil
@@ -203,8 +225,10 @@ type surfaceFlag struct {
 
 // validateCommand checks one declared command and descends into its
 // subcommands, carrying the flag surface they inherit: the common flags and
-// every ancestor's persistent flags.
-func validateCommand(path string, c *Command, inherited []surfaceFlag, commonNames map[string]bool) error {
+// every ancestor's persistent flags. The availability checks ride the same
+// walk: rules declared on this command validate against the shared condition
+// set.
+func validateCommand(path string, c *Command, inherited []surfaceFlag, commonNames map[string]bool, checks *availabilityChecks) error {
 	if c.Short == "" {
 		return UsageErrorf("command %q has no help short", path)
 	}
@@ -212,6 +236,11 @@ func validateCommand(path string, c *Command, inherited []surfaceFlag, commonNam
 		// Only leaf commands run: a parent with subcommands fails with a
 		// caller error when invoked bare.
 		return UsageErrorf("command %q must declare exactly one of Handle or Raw", path)
+	}
+	if rules := checks.rulesByCmd[c]; len(rules) > 0 {
+		if err := validateAvailabilityRules(path, rules, checks); err != nil {
+			return err
+		}
 	}
 	// The builder registers a command's persistent flags only when the
 	// command owns subcommands, and its plain flags only on a leaf; the
@@ -225,7 +254,7 @@ func validateCommand(path string, c *Command, inherited []surfaceFlag, commonNam
 		return err
 	}
 	for _, sub := range c.Subcommands {
-		if err := validateCommand(path+" "+sub.Name, sub, surface, commonNames); err != nil {
+		if err := validateCommand(path+" "+sub.Name, sub, surface, commonNames, checks); err != nil {
 			return err
 		}
 	}
