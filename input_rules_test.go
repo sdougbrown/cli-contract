@@ -165,8 +165,8 @@ func TestInputRulesDeclarationValidation(t *testing.T) {
 			mutate: func(a *App) {
 				a.Commands[0].InputRules = []*Rule{
 					AnyOf(
-						GateOn("roster-file", Present("roster-entry"), ""),
-						GateOn("prompt", Present("prompt-file"), ""),
+						EnabledOn("roster-file", Present("roster-entry"), ""),
+						EnabledOn("prompt", Present("prompt-file"), ""),
 					),
 				}
 			},
@@ -177,7 +177,7 @@ func TestInputRulesDeclarationValidation(t *testing.T) {
 			mutate: func(a *App) {
 				a.AvailabilityConditions = []Condition{{Name: "profile", Type: ConditionString}}
 				a.Commands[0].Availability = []*Rule{
-					Gate(&Expr{Op: OpCond, Condition: "profile", Field: "prompt"}, ""),
+					Enabled(&Expr{Op: OpCond, Condition: "profile", Field: "prompt"}, ""),
 				}
 			},
 			want: "also names a field",
@@ -186,7 +186,7 @@ func TestInputRulesDeclarationValidation(t *testing.T) {
 			name: "field expression also names a condition",
 			mutate: func(a *App) {
 				a.Commands[0].InputRules = []*Rule{
-					GateOn("prompt", &Expr{Op: OpPresent, Field: "prompt-file", Condition: "profile"}, ""),
+					EnabledOn("prompt", &Expr{Op: OpPresent, Field: "prompt-file", Condition: "profile"}, ""),
 				}
 			},
 			want: "also names a condition",
@@ -231,7 +231,7 @@ func TestInputRulesDeclarationValidation(t *testing.T) {
 					{Name: "profile", Type: ConditionString},
 				}
 				a.Commands[0].Availability = []*Rule{
-					Gate(Present("prompt"), ""),
+					Enabled(Present("prompt"), ""),
 				}
 			},
 			want: "compares the command's own inputs",
@@ -605,8 +605,8 @@ func TestEnforceNamedPath(t *testing.T) {
 func TestInputRulesGivenTogether(t *testing.T) {
 	app := inputRulesApp()
 	app.Commands[0].InputRules = []*Rule{
-		GateOn("roster-file", Present("roster-entry"), "a roster file needs an entry"),
-		GateOn("roster-entry", Present("roster-file"), "an entry needs a roster file"),
+		EnabledOn("roster-file", Present("roster-entry"), "a roster file needs an entry"),
+		EnabledOn("roster-entry", Present("roster-file"), "an entry needs a roster file"),
 	}
 
 	cases := []struct {
