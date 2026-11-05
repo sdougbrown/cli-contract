@@ -402,6 +402,7 @@ func (a *App) buildTree(exec *execution, runHandlers bool) *cobra.Command {
 				return UsageErrorf("unknown help topic %q", strings.Join(args, " "))
 			}
 			target.InitDefaultHelpFlag()
+			target.InitDefaultVersionFlag()
 			return target.Help()
 		},
 	})
