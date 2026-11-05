@@ -211,6 +211,21 @@ dialects do not mix: availability rules compare conditions a consumer supplies
 at load, input rules compare the command's own inputs, and a declaration that
 crosses them fails at startup.
 
+Every rule above is one-directional: a supplied `--roster-file` needs
+`--roster-entry`, while an entry can stand alone. A pair that must be given
+together gates each flag on the other instead. Two `requires` rules pointing at
+each other form a dependency cycle, which Umpire rejects at startup:
+
+```go
+InputRules: []clicontract.Rule{
+    clicontract.GateOn("roster-file", clicontract.Present("roster-entry"), "a roster file needs an entry"),
+    clicontract.GateOn("roster-entry", clicontract.Present("roster-file"), "an entry needs a roster file"),
+},
+```
+
+A flag declared `Required` is checked at the same point, which moves that
+failure from the handler to the parser.
+
 The rules validate with the rest of the surface and render into the command's
 schema entry as `inputRules`, beside `flags`, and into the [registry](registry/registry.go)
 manifest's tool block under the same key, for cli-registry to check before it
@@ -218,8 +233,7 @@ starts the process.
 
 `Run` and `Parse` enforce them too, so a handler never re-checks a relationship
 the declaration already states: a violating invocation is a caller error (exit
-2) carrying the rule's reason. A flag declared `Required` is checked at the same
-point, which moves that failure from the handler to the parser.
+2) carrying the rule's reason.
 
 ## Parse without running
 
