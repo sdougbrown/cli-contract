@@ -198,7 +198,6 @@ func validateAvailability(app *App) (*availabilityChecks, error) {
 		declared:   declared,
 		rulesByCmd: map[*Command][]*AvailabilityRule{},
 		toolNames:  map[string]bool{},
-		appName:    app.Name,
 	}
 	var collect func(path string, cmd *Command) error
 	collect = func(path string, cmd *Command) error {
@@ -241,7 +240,6 @@ func ToolName(name, path string) string {
 // the explicit field references that resolve against that set after the
 // walk completes.
 type availabilityChecks struct {
-	appName    string
 	declared   map[string]bool
 	rulesByCmd map[*Command][]*AvailabilityRule
 	toolNames  map[string]bool

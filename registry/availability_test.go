@@ -286,22 +286,26 @@ func TestAvailabilityDeclarationValidation(t *testing.T) {
 	}
 }
 
-func TestManifestAvailabilityCompositeBuilders(t *testing.T) {
-	app := &clicontract.App{
+// compositeApp declares the compound availability shapes: GateOn with an
+// or-expression, RequiresOn with an and-expression, an anyOf mixing explicit
+// and inherited fields, and an eitherOf with two branches.
+func compositeApp() *clicontract.App {
+	return &clicontract.App{
 		Name:      "testcli",
 		Version:   "vtest",
 		RootShort: "test cli",
 		AvailabilityConditions: []clicontract.Condition{
 			{Name: "mode", Type: clicontract.ConditionString},
 			{Name: "write_ok", Type: clicontract.ConditionBoolean},
+			{Name: "read_only", Type: clicontract.ConditionBoolean},
+			{Name: "region", Type: clicontract.ConditionString},
 		},
 		Commands: []*clicontract.Command{
+			{Name: "view", Short: "view a thing", Handle: noopHandle},
 			{
 				Name:   "quick",
 				Short:  "quick path",
 				Handle: noopHandle,
-				// GateOn with an explicit field, plus requires with a
-				// compound expression.
 				Availability: []*clicontract.AvailabilityRule{
 					clicontract.GateOn(
 						"testcli-quick",
@@ -316,6 +320,10 @@ func TestManifestAvailabilityCompositeBuilders(t *testing.T) {
 						clicontract.And(clicontract.When("write_ok"), clicontract.Not(clicontract.CondEq("mode", "frozen"))),
 						"",
 					),
+					clicontract.AnyOf(
+						clicontract.GateOn("testcli-quick", clicontract.CondEq("mode", "full"), ""),
+						clicontract.Gate(clicontract.CondEq("mode", "extended"), ""),
+					),
 				},
 			},
 			{
@@ -329,10 +337,22 @@ func TestManifestAvailabilityCompositeBuilders(t *testing.T) {
 					}),
 				},
 			},
+			{
+				Name:   "deploy",
+				Short:  "deploy to a region",
+				Handle: noopHandle,
+				Availability: []*clicontract.AvailabilityRule{
+					clicontract.Requires(clicontract.CondIn("region", "us", "eu"), "region is not served"),
+					clicontract.Disables([]string{"view"}, clicontract.When("read_only"), ""),
+				},
+			},
 		},
 	}
-	// AnyOf: operands gate the same tool, one explicit and one inherited.
-	app.Commands[0].Availability = append(app.Commands[0].Availability,
+}
+
+func TestManifestAvailabilityCompositeBuilders(t *testing.T) {
+	app := compositeApp()
+	app.Commands[1].Availability = append(app.Commands[1].Availability,
 		clicontract.AnyOf(
 			clicontract.GateOn("testcli-quick", clicontract.CondEq("mode", "full"), ""),
 			clicontract.Gate(clicontract.CondEq("mode", "extended"), ""),
@@ -346,7 +366,7 @@ func TestManifestAvailabilityCompositeBuilders(t *testing.T) {
 	expectTreePanic(t, app, "", false)
 
 	// Full mode: quick enabled (or + anyOf pass, requires passes).
-	status := evaluateAvailability(t, manifest, map[string]any{"mode": "full", "write_ok": true})
+	status := evaluateAvailability(t, manifest, map[string]any{"mode": "full", "write_ok": true, "read_only": false, "region": "us"})
 	if !status["testcli-quick"].Enabled {
 		t.Errorf("quick should be enabled in full mode: %+v", status["testcli-quick"])
 	}
@@ -355,7 +375,7 @@ func TestManifestAvailabilityCompositeBuilders(t *testing.T) {
 	}
 
 	// Basic mode: everything gates off with the composed reasons.
-	status = evaluateAvailability(t, manifest, map[string]any{"mode": "basic", "write_ok": true})
+	status = evaluateAvailability(t, manifest, map[string]any{"mode": "basic", "write_ok": true, "read_only": false, "region": "us"})
 	if status["testcli-quick"].Enabled {
 		t.Errorf("quick should be gated off in basic mode")
 	}
@@ -366,7 +386,6 @@ func TestManifestAvailabilityCompositeBuilders(t *testing.T) {
 		t.Errorf("quick reason = %q", status["testcli-quick"].Reason)
 	}
 }
-
 func TestManifestAvailabilityEitherOfGroup(t *testing.T) {
 	// EitherOf's group must render into the manifest; the Umpire contract
 	// requires it and a dropped group would fail the consumer.
@@ -690,4 +709,48 @@ func TestAvailabilityEmptyDisablesTargetsRejected(t *testing.T) {
 	app.Commands[2].Availability = append(app.Commands[2].Availability,
 		clicontract.Disables(nil, clicontract.When("read_only"), ""))
 	expectTreePanic(t, app, "has no targets", true)
+}
+
+func TestManifestAvailabilityCompositeFailurePaths(t *testing.T) {
+	// Pins the requires failure path independently (write_ok false), the
+	// eitherOf sso branch positive case, and nested command path targets.
+	app := compositeApp()
+	app.Commands = append(app.Commands, &clicontract.Command{
+		Name:  "store",
+		Short: "store utilities",
+		Subcommands: []*clicontract.Command{
+			{Name: "reset", Short: "reset the store", Handle: noopHandle},
+		},
+	})
+	app.Commands[3].Availability = append(app.Commands[3].Availability,
+		clicontract.Disables([]string{"store reset"}, clicontract.When("read_only"), ""))
+
+	manifest, err := Manifest(app, Options{Binary: "testcli"})
+	if err != nil {
+		t.Fatalf("manifest: %v", err)
+	}
+
+	// Requires failure: mode is fine but write_ok is false, so the
+	// RequiresOn rule gates quick off with its reason.
+	status := evaluateAvailability(t, manifest, map[string]any{"read_only": false, "region": "us", "mode": "full", "write_ok": false})
+	if status["testcli-quick"].Enabled {
+		t.Errorf("quick should be gated off when write_ok is false: %+v", status["testcli-quick"])
+	}
+	if status["testcli-quick"].Reason != "required condition not met" {
+		t.Errorf("quick reason = %q", status["testcli-quick"].Reason)
+	}
+
+	// EitherOf sso branch positive case.
+	status = evaluateAvailability(t, manifest, map[string]any{"read_only": false, "region": "us", "mode": "sso", "write_ok": true})
+	if !status["testcli-either"].Enabled {
+		t.Errorf("either should be enabled via the sso branch: %+v", status["testcli-either"])
+	}
+
+	// Nested command path target resolves through ToolName.
+	if !strings.Contains(string(manifest), "testcli-store-reset") {
+		t.Error("nested command path target did not resolve to the tool name")
+	}
+	if strings.Contains(string(manifest), `["store reset"]`) {
+		t.Error("a nested command path leaked into the manifest unresolved")
+	}
 }
