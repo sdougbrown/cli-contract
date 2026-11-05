@@ -212,7 +212,9 @@ at load, input rules compare the command's own inputs, and a declaration that
 crosses them fails at startup.
 
 The rules validate with the rest of the surface and render into the command's
-schema entry as `inputRules`, beside `flags`.
+schema entry as `inputRules`, beside `flags`, and into the [registry](registry/registry.go)
+manifest's tool block under the same key, for cli-registry to check before it
+starts the process.
 
 ## Parse without running
 

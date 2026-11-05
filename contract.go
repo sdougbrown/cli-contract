@@ -204,7 +204,7 @@ func validate(app *App) error {
 		return err
 	}
 	for _, cmd := range app.Commands {
-		if err := validateCommand(cmd.Name, cmd, inherited, commonNames, checks); err != nil {
+		if err := validateCommand(cmd.Name, cmd, inherited, app.CommonFlags, commonNames, checks); err != nil {
 			return err
 		}
 	}
@@ -232,7 +232,7 @@ type surfaceFlag struct {
 // every ancestor's persistent flags. The availability checks ride the same
 // walk: rules declared on this command validate against the shared condition
 // set.
-func validateCommand(path string, c *Command, inherited []surfaceFlag, commonNames map[string]bool, checks *availabilityChecks) error {
+func validateCommand(path string, c *Command, inherited []surfaceFlag, common []Flag, commonNames map[string]bool, checks *availabilityChecks) error {
 	if c.Short == "" {
 		return UsageErrorf("command %q has no help short", path)
 	}
@@ -260,12 +260,12 @@ func validateCommand(path string, c *Command, inherited []surfaceFlag, commonNam
 	// Input rules name flags on the surface the command parses, so they
 	// validate against that surface rather than the rule set's own list.
 	if rules := checks.inputByCmd[c]; len(rules) > 0 {
-		if err := validateInputRules(path, rules, surface); err != nil {
+		if err := validateInputRules(path, rules, exposableSurface(common, registered)); err != nil {
 			return err
 		}
 	}
 	for _, sub := range c.Subcommands {
-		if err := validateCommand(path+" "+sub.Name, sub, surface, commonNames, checks); err != nil {
+		if err := validateCommand(path+" "+sub.Name, sub, surface, common, commonNames, checks); err != nil {
 			return err
 		}
 	}
