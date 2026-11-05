@@ -196,6 +196,7 @@ func invocationFrom(cmd *cobra.Command, c *Command, ancestors []*Command, args [
 		Args:      args, // validated by positionalArgs
 		Flags:     map[string]string{},
 		Bools:     map[string]bool{},
+		Repeated:  map[string][]string{},
 		Ints:      map[string]int{},
 		Durations: map[string]time.Duration{},
 		Supplied:  map[string]bool{},
@@ -235,6 +236,7 @@ func invocationFrom(cmd *cobra.Command, c *Command, ancestors []*Command, args [
 				return err
 			}
 			inv.Events = arr
+			inv.Repeated[f.Name] = arr
 		case Int:
 			n, err := fs.GetInt(f.Name)
 			if err != nil {
@@ -289,6 +291,9 @@ func dispatchRunE(exec *execution, runHandlers bool, c *Command, ancestors []*Co
 		if err != nil {
 			return err
 		}
+		if err := exec.app.enforceInputRules(exec, c, ancestors, inv); err != nil {
+			return err
+		}
 		exec.inv = inv
 		exec.ran = true
 		if !runHandlers {
@@ -308,6 +313,9 @@ func rawRunE(exec *execution, runHandlers bool, c *Command, ancestors []*Command
 	return func(cmd *cobra.Command, args []string) error {
 		inv, err := invocationFrom(cmd, c, ancestors, args, common)
 		if err != nil {
+			return err
+		}
+		if err := exec.app.enforceInputRules(exec, c, ancestors, inv); err != nil {
 			return err
 		}
 		exec.inv = inv

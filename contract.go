@@ -51,8 +51,9 @@ type Flag struct {
 	// Short is the optional single-letter shorthand (for example "f" for
 	// --follow). Empty means none.
 	Short string
-	// Required marks a flag the caller must provide. Rendered as required
-	// in the schema document and in generated manifests.
+	// Required marks a flag the caller must provide. Rendered as required in
+	// the schema document and in generated manifests, and enforced at parse
+	// time.
 	Required bool
 }
 
@@ -81,8 +82,12 @@ type Invocation struct {
 	Flags map[string]string
 	// Bools holds boolean flags by name; absent flags are false.
 	Bools map[string]bool
-	// Events holds repeated flag values (kind Repeat).
+	// Events holds repeated flag values (kind Repeat); with more than one
+	// Repeat flag it holds whichever was read last, so read Repeated instead.
 	Events []string
+	// Repeated holds repeated flag values by name, one entry per declared
+	// Repeat flag, so a command with two of them does not share one slice.
+	Repeated map[string][]string
 	// Ints holds integer flag values by name; absent flags are 0.
 	Ints map[string]int
 	// Durations holds duration flag values by name; absent flags are 0.
