@@ -224,10 +224,19 @@ func TestAvailabilityDeclarationValidation(t *testing.T) {
 			name: "unknown expression op",
 			mutate: func(a *clicontract.App) {
 				a.Commands[1].Availability = []*clicontract.Rule{
-					clicontract.Gate(&clicontract.Expr{Op: "eq", Condition: "read_only"}, ""),
+					clicontract.Gate(&clicontract.Expr{Op: "nope", Condition: "read_only"}, ""),
 				}
 			},
-			wantErr: `unknown op "eq"`,
+			wantErr: `unknown op "nope"`,
+		},
+		{
+			name: "field expression in the availability set",
+			mutate: func(a *clicontract.App) {
+				a.Commands[1].Availability = []*clicontract.Rule{
+					clicontract.Gate(clicontract.Present("read_only"), ""),
+				}
+			},
+			wantErr: "compares the command's own inputs",
 		},
 		{
 			name: "condition without a name",
