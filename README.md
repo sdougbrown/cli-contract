@@ -174,14 +174,14 @@ app := &clicontract.App{
             Availability: []*clicontract.Rule{
                 // Rules without an explicit field gate their own tool;
                 // targets in a disables rule are command paths.
-                clicontract.Gate(clicontract.Not(clicontract.When("read_only")), "the profile is read-only"),
+                clicontract.Enabled(clicontract.Not(clicontract.When("read_only")), "the profile is read-only"),
             },
         },
     },
 }
 ```
 
-Rule vocabulary: `Gate`/`GateOn` (enabledWhen), `Requires`/`RequiresOn`,
+Rule vocabulary: `Enabled`/`EnabledOn` (enabledWhen), `Requires`/`RequiresOn`,
 `Disables`, `AnyOf`, `EitherOf`; expressions via `When`, `CondEq`, `CondIn`,
 `And`, `Or`, `Not`. The declarations validate at startup alongside the rest
 of the surface, and the [registry](registry/registry.go) package renders them
@@ -204,7 +204,7 @@ InputRules: []clicontract.Rule{
 ```
 
 The vocabulary is availability's, in the field dialect: `RequiresOn`/`Requires`,
-`GateOn`/`Gate`, `Disables`, `AnyOf`, and `EitherOf` over `Present`, `Absent`,
+`EnabledOn`/`Enabled`, `Disables`, `AnyOf`, and `EitherOf` over `Present`, `Absent`,
 `Truthy`, `Falsy`, `Eq`, `In`, `NotIn`, `And`, `Or`, and `Not`. A rule names the
 flag it constrains in its field, and a `disables` target is a flag name. The
 dialects do not mix: availability rules compare conditions a consumer supplies
@@ -218,8 +218,8 @@ each other form a dependency cycle, which Umpire rejects at startup:
 
 ```go
 InputRules: []clicontract.Rule{
-    clicontract.GateOn("roster-file", clicontract.Present("roster-entry"), "a roster file needs an entry"),
-    clicontract.GateOn("roster-entry", clicontract.Present("roster-file"), "an entry needs a roster file"),
+    clicontract.EnabledOn("roster-file", clicontract.Present("roster-entry"), "a roster file needs an entry"),
+    clicontract.EnabledOn("roster-entry", clicontract.Present("roster-file"), "an entry needs a roster file"),
 },
 ```
 

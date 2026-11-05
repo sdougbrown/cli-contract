@@ -91,7 +91,7 @@ type Expr struct {
 	Expr *Expr `json:"expr,omitempty"`
 }
 
-// Rule is one Umpire rule. Build rules with Gate, GateOn, Requires,
+// Rule is one Umpire rule. Build rules with Enabled, EnabledOn, Requires,
 // RequiresOn, Disables, AnyOf, and EitherOf, and expressions with the
 // constructors above. A rule's Field and Targets name subjects in the
 // namespace of the set it is declared in: tool names under
@@ -186,31 +186,31 @@ func Not(expr *Expr) *Expr {
 	return &Expr{Op: OpNot, Expr: expr}
 }
 
-// Gate enables the declaring command's tool only when the expression passes.
+// Enabled enables the declaring command's tool only when the expression passes.
 // An empty reason takes the default "condition not met".
-func Gate(when *Expr, reason string) *Rule {
-	return gateRule("", RuleEnabledWhen, when, reason, "condition not met")
+func Enabled(when *Expr, reason string) *Rule {
+	return enabledRule("", RuleEnabledWhen, when, reason, "condition not met")
 }
 
-// GateOn is Gate targeting an explicitly named subject: a tool in the
+// EnabledOn is Enabled targeting an explicitly named subject: a tool in the
 // availability set, a flag in the input set.
-func GateOn(field string, when *Expr, reason string) *Rule {
-	return gateRule(field, RuleEnabledWhen, when, reason, "condition not met")
+func EnabledOn(field string, when *Expr, reason string) *Rule {
+	return enabledRule(field, RuleEnabledWhen, when, reason, "condition not met")
 }
 
 // Requires keeps the declaring command's tool gated until the condition is
 // met. An empty reason takes the default "required condition not met".
 func Requires(when *Expr, reason string) *Rule {
-	return gateRule("", RuleRequires, when, reason, "required condition not met")
+	return enabledRule("", RuleRequires, when, reason, "required condition not met")
 }
 
 // RequiresOn is Requires targeting an explicitly named subject: a tool in the
 // availability set, a flag in the input set.
 func RequiresOn(field string, when *Expr, reason string) *Rule {
-	return gateRule(field, RuleRequires, when, reason, "required condition not met")
+	return enabledRule(field, RuleRequires, when, reason, "required condition not met")
 }
 
-func gateRule(field, ruleType string, when *Expr, reason, defaultReason string) *Rule {
+func enabledRule(field, ruleType string, when *Expr, reason, defaultReason string) *Rule {
 	if reason == "" {
 		reason = defaultReason
 	}
