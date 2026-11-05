@@ -131,6 +131,10 @@ type Command struct {
 	// gate; a command with subcommands fails validation when it declares
 	// rules. Rules without an explicit Field apply to this command's tool.
 	Availability []*Rule
+	// InputRules gate whether one invocation is legal: rules over the flags
+	// this command parses. Only leaf commands can declare them. A rule's
+	// Field and Targets name flag names.
+	InputRules []*Rule
 	// Handle runs the command and returns the result the adapter writes.
 	// Mutually exclusive with Raw.
 	Handle HandleFunc
@@ -252,6 +256,13 @@ func validateCommand(path string, c *Command, inherited []surfaceFlag, commonNam
 	surface, err := validateFlags(fmt.Sprintf("command %q", path), inherited, registered, commonNames)
 	if err != nil {
 		return err
+	}
+	// Input rules name flags on the surface the command parses, so they
+	// validate against that surface rather than the rule set's own list.
+	if rules := checks.inputByCmd[c]; len(rules) > 0 {
+		if err := validateInputRules(path, rules, surface); err != nil {
+			return err
+		}
 	}
 	for _, sub := range c.Subcommands {
 		if err := validateCommand(path+" "+sub.Name, sub, surface, commonNames, checks); err != nil {
