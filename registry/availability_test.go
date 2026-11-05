@@ -531,9 +531,6 @@ func TestAvailabilityDeclarationValidationMore(t *testing.T) {
 }
 
 func TestManifestAvailabilityTargetsResolveThroughComposites(t *testing.T) {
-	// Disables targets declared inside anyOf rules and eitherOf branches
-	// must resolve through resolveTargets' recursion; a regression that
-	// skips it would emit dangling tool names the consumer rejects.
 	app := availabilityApp()
 	app.Commands[2].Availability = append(app.Commands[2].Availability,
 		clicontract.AnyOf(
@@ -550,21 +547,53 @@ func TestManifestAvailabilityTargetsResolveThroughComposites(t *testing.T) {
 	if err != nil {
 		t.Fatalf("manifest: %v", err)
 	}
-	body := string(manifest)
-	if !strings.Contains(body, `"targets": [
-        "testcli-view"
-      ]`) && !strings.Contains(body, "testcli-view") {
-		t.Error("anyOf-wrapped disables target did not resolve to a tool name")
+
+	var m struct {
+		Availability struct {
+			Rules []struct {
+				Type    string   `json:"type"`
+				Targets []string `json:"targets"`
+				Rules   []struct {
+					Type    string   `json:"type"`
+					Targets []string `json:"targets"`
+				} `json:"rules"`
+				Branches map[string][]struct {
+					Type    string   `json:"type"`
+					Targets []string `json:"targets"`
+				} `json:"branches"`
+			} `json:"rules"`
+		} `json:"availability"`
 	}
-	if !strings.Contains(body, "testcli-edit") {
-		t.Error("eitherOf-branch disables target did not resolve to a tool name")
+	if err := json.Unmarshal(manifest, &m); err != nil {
+		t.Fatal(err)
 	}
-	if strings.Contains(body, `"targets": [
-        "view"`) {
-		t.Error("a bare command path leaked into the manifest targets")
+
+	// Collect every targets array in the block and assert resolution.
+	var seen []string
+	for _, rule := range m.Availability.Rules {
+		seen = append(seen, rule.Targets...)
+		for _, inner := range rule.Rules {
+			seen = append(seen, inner.Targets...)
+		}
+		for _, branch := range rule.Branches {
+			for _, inner := range branch {
+				seen = append(seen, inner.Targets...)
+			}
+		}
+	}
+	joined := strings.Join(seen, ",")
+	if !strings.Contains(joined, "testcli-view") {
+		t.Errorf("anyOf-wrapped disables target did not resolve; targets = %v", seen)
+	}
+	if !strings.Contains(joined, "testcli-edit") {
+		t.Errorf("eitherOf-branch disables target did not resolve; targets = %v", seen)
+	}
+	for _, target := range seen {
+		if target == "view" || target == "edit" {
+			t.Errorf("a bare command path leaked into targets: %q (all: %v)", target, seen)
+		}
 	}
 }
-
 func TestAvailabilityEitherOfBranchFieldMismatch(t *testing.T) {
 	// The consumer's composite constructors panic when operands gate
 	// different tools; validation must catch it at the declaration site.
@@ -593,4 +622,72 @@ func TestManifestAvailabilityMixedOperandMismatchFails(t *testing.T) {
 	if _, err := Manifest(app, Options{Binary: "testcli"}); err == nil {
 		t.Fatal("expected Manifest to fail on a composite spanning two tools")
 	}
+}
+
+func TestManifestAvailabilityRejectsParentRules(t *testing.T) {
+	// A rule declared on a parent command would render into nothing;
+	// Manifest must fail rather than silently drop it.
+	app := availabilityApp()
+	app.Commands[0].Subcommands = []*clicontract.Command{
+		{Name: "sub", Short: "s", Handle: noopHandle},
+	}
+	app.Commands[0].Availability = []*clicontract.AvailabilityRule{
+		clicontract.Gate(clicontract.When("read_only"), ""),
+	}
+	if _, err := Manifest(app, Options{Binary: "testcli"}); err == nil {
+		t.Fatal("expected Manifest to reject rules on a parent command")
+	}
+}
+
+func TestManifestAvailabilityUnknownFieldFails(t *testing.T) {
+	// An explicit Field on GateOn/RequiresOn must resolve against the
+	// generated tool set at startup, not at the consumer.
+	app := availabilityApp()
+	app.Commands[1].Availability = []*clicontract.AvailabilityRule{
+		clicontract.GateOn("testcli-vew", clicontract.When("read_only"), ""),
+	}
+	expectTreePanic(t, app, `unknown tool "testcli-vew"`, true)
+}
+
+func TestManifestAvailabilityFullToolNameTarget(t *testing.T) {
+	// A disables target given as an already-full tool name resolves
+	// without the command-path fallback.
+	app := availabilityApp()
+	app.Commands[2].Availability = append(app.Commands[2].Availability,
+		clicontract.Disables([]string{"testcli-view"}, clicontract.When("read_only"), ""))
+	manifest, err := Manifest(app, Options{Binary: "testcli"})
+	if err != nil {
+		t.Fatalf("manifest: %v — a full tool-name target must resolve", err)
+	}
+	var m struct {
+		Availability struct {
+			Rules []struct {
+				Targets []string `json:"targets"`
+			} `json:"rules"`
+		} `json:"availability"`
+	}
+	if err := json.Unmarshal(manifest, &m); err != nil {
+		t.Fatal(err)
+	}
+	found := false
+	for _, rule := range m.Availability.Rules {
+		for _, target := range rule.Targets {
+			if target == "testcli-view" {
+				found = true
+			}
+			if target == "testcli-testcli-view" {
+				t.Errorf("full tool-name target was double-prefixed: %q", target)
+			}
+		}
+	}
+	if !found {
+		t.Errorf("full tool-name target missing from rendered rules: %+v", m.Availability.Rules)
+	}
+}
+
+func TestAvailabilityEmptyDisablesTargetsRejected(t *testing.T) {
+	app := availabilityApp()
+	app.Commands[2].Availability = append(app.Commands[2].Availability,
+		clicontract.Disables(nil, clicontract.When("read_only"), ""))
+	expectTreePanic(t, app, "has no targets", true)
 }

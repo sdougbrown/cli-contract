@@ -204,6 +204,14 @@ func validate(app *App) error {
 			return err
 		}
 	}
+	for _, ref := range checks.fieldRefs {
+		if !checks.toolNames[ref.field] {
+			return UsageErrorf(
+				"command %q availability rule %d targets unknown tool %q",
+				ref.path, ref.index, ref.field,
+			)
+		}
+	}
 	return nil
 }
 
@@ -230,7 +238,7 @@ func validateCommand(path string, c *Command, inherited []surfaceFlag, commonNam
 		return UsageErrorf("command %q must declare exactly one of Handle or Raw", path)
 	}
 	if rules := checks.rulesByCmd[c]; len(rules) > 0 {
-		if err := validateAvailabilityRules(path, rules, checks.declared); err != nil {
+		if err := validateAvailabilityRules(path, rules, checks); err != nil {
 			return err
 		}
 	}

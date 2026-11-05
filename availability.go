@@ -1,5 +1,7 @@
 package clicontract
 
+import "strings"
+
 // Availability declarations: each command may gate its availability with
 // Umpire rules over declared inputs the consumer supplies at load time
 // (profile mode, permission level, feature flags). The declarations render
@@ -192,47 +194,79 @@ func validateAvailability(app *App) (*availabilityChecks, error) {
 		declared[c.Name] = true
 	}
 
-	checks := &availabilityChecks{declared: declared, rulesByCmd: map[*Command][]*AvailabilityRule{}}
-	var collect func(cmd *Command) error
-	collect = func(cmd *Command) error {
+	checks := &availabilityChecks{
+		declared:   declared,
+		rulesByCmd: map[*Command][]*AvailabilityRule{},
+		toolNames:  map[string]bool{},
+		appName:    app.Name,
+	}
+	var collect func(path string, cmd *Command) error
+	collect = func(path string, cmd *Command) error {
 		if len(cmd.Availability) > 0 && len(cmd.Subcommands) > 0 {
 			return UsageErrorf(
-				"a command that owns subcommands declares availability rules; only leaf commands run as tools",
+				"command %q declares availability rules but owns subcommands; only leaf commands run as tools",
+				path,
 			)
+		}
+		if len(cmd.Subcommands) == 0 {
+			checks.toolNames[ToolName(app.Name, path)] = true
 		}
 		if len(cmd.Availability) > 0 {
 			checks.rulesByCmd[cmd] = cmd.Availability
 		}
 		for _, sub := range cmd.Subcommands {
-			if err := collect(sub); err != nil {
+			if err := collect(path+" "+sub.Name, sub); err != nil {
 				return err
 			}
 		}
 		return nil
 	}
 	for _, cmd := range app.Commands {
-		if err := collect(cmd); err != nil {
+		if err := collect(cmd.Name, cmd); err != nil {
 			return nil, err
 		}
 	}
 	return checks, nil
 }
 
+// ToolName renders the registry tool name for a command path: the app name
+// and the dash-joined command path ("mycli store reset" → "mycli-store-reset").
+func ToolName(name, path string) string {
+	return strings.ReplaceAll(name+" "+path, " ", "-")
+}
+
 // availabilityChecks carries the validated availability declarations into
-// the shared command-tree walk: the declared condition names and the rules
-// declared per command (leaf commands only).
+// the shared command-tree walk: the declared condition names, the rules
+// declared per command (leaf commands only), the generated tool names, and
+// the explicit field references that resolve against that set after the
+// walk completes.
 type availabilityChecks struct {
+	appName    string
 	declared   map[string]bool
 	rulesByCmd map[*Command][]*AvailabilityRule
+	toolNames  map[string]bool
+	fieldRefs  []fieldRef
+}
+
+// fieldRef is one explicit Field on a leaf rule, recorded during the walk
+// and resolved after the whole tree is known.
+type fieldRef struct {
+	path  string
+	index int
+	field string
 }
 
 // validateAvailabilityRules checks one command's declared rules against the
-// declared conditions. Called from validateCommand with the same path strings
-// the rest of the surface validation uses.
-func validateAvailabilityRules(path string, rules []*AvailabilityRule, declared map[string]bool) error {
+// declared conditions and records explicit field references for resolution
+// after the walk. Called from validateCommand with the same path strings the
+// rest of the surface validation uses.
+func validateAvailabilityRules(path string, rules []*AvailabilityRule, checks *availabilityChecks) error {
 	for i, rule := range rules {
-		if err := validateAvailabilityRule(path, i, rule, declared); err != nil {
+		if err := validateAvailabilityRule(path, i, rule, checks.declared); err != nil {
 			return err
+		}
+		if rule.Field != "" && (rule.Type == RuleEnabledWhen || rule.Type == RuleRequires) {
+			checks.fieldRefs = append(checks.fieldRefs, fieldRef{path: path, index: i, field: rule.Field})
 		}
 	}
 	return nil
@@ -244,6 +278,12 @@ func validateAvailabilityRule(path string, index int, rule *AvailabilityRule, de
 	}
 	switch rule.Type {
 	case RuleEnabledWhen, RuleRequires, RuleDisables:
+		if rule.Type == RuleDisables && len(rule.Targets) == 0 {
+			return UsageErrorf(
+				"command %q availability rule %d (disables) has no targets; the rule would be inert",
+				path, index,
+			)
+		}
 		if rule.When == nil {
 			return UsageErrorf(
 				"command %q availability rule %d (%s) requires a condition expression",
@@ -294,13 +334,12 @@ func validateAvailabilityRule(path string, index int, rule *AvailabilityRule, de
 		if err := validateSameField(path, index, "eitherOf", flat); err != nil {
 			return err
 		}
-		for name, branch := range rule.Branches {
+		for _, branch := range rule.Branches {
 			for i, inner := range branch {
 				if err := validateAvailabilityRule(path, i, inner, declared); err != nil {
 					return err
 				}
 			}
-			_ = name
 		}
 	default:
 		return UsageErrorf(

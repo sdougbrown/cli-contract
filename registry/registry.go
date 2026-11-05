@@ -158,21 +158,32 @@ func Manifest(app *clicontract.App, opts Options) ([]byte, error) {
 	}
 	tools := map[string]toolShape{}
 	var rules []*clicontract.AvailabilityRule
-	var walk func(path []string, cmd *clicontract.Command)
-	walk = func(path []string, cmd *clicontract.Command) {
+	var walk func(path []string, cmd *clicontract.Command) error
+	walk = func(path []string, cmd *clicontract.Command) error {
 		if len(cmd.Subcommands) > 0 {
-			for _, sub := range cmd.Subcommands {
-				walk(append(path, sub.Name), sub)
+			if len(cmd.Availability) > 0 {
+				return fmt.Errorf(
+					"command %q declares availability rules but owns subcommands; only leaf commands run as tools",
+					strings.Join(path, " "),
+				)
 			}
-			return
+			for _, sub := range cmd.Subcommands {
+				if err := walk(append(path, sub.Name), sub); err != nil {
+					return err
+				}
+			}
+			return nil
 		}
-		tool := toolName(app.Name, strings.Join(path, "-"))
+		tool := clicontract.ToolName(app.Name, strings.Join(path, "-"))
 		tools[tool] = buildTool(
 			opts, timeout, app.Name, path, cmd, app.CommonFlags)
 		rules = append(rules, resolvedRules(tool, cmd.Availability)...)
+		return nil
 	}
 	for _, cmd := range app.Commands {
-		walk([]string{cmd.Name}, cmd)
+		if err := walk([]string{cmd.Name}, cmd); err != nil {
+			return nil, err
+		}
 	}
 	for name, t := range tools {
 		bindings := t.Bindings
@@ -310,7 +321,7 @@ func resolveTargets(appName string, tools map[string]toolShape, rules []*clicont
 		if _, ok := tools[target]; ok {
 			return target, true
 		}
-		full := toolName(appName, target)
+		full := clicontract.ToolName(appName, target)
 		if _, ok := tools[full]; ok {
 			return full, true
 		}
@@ -348,11 +359,6 @@ func resolveTargets(appName string, tools map[string]toolShape, rules []*clicont
 		}
 	}
 	return rules, nil
-}
-
-// toolName joins the command path with dashes.
-func toolName(prefix, name string) string {
-	return strings.ReplaceAll(prefix+" "+name, " ", "-")
 }
 
 // buildTool renders one leaf command as a tool.
