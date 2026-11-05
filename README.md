@@ -188,6 +188,32 @@ of the surface, and the [registry](registry/registry.go) package renders them
 into a cli-registry manifest's top-level availability block, which the
 consumer evaluates with [`umpire-go`](https://github.com/umpire-tools/umpire-go).
 
+## Input rules
+
+Each declared flag is independent of its siblings, so a document generated from
+a declaration accepts invocations the CLI rejects at run time. `InputRules`
+names those relationships once, over the flags the command parses:
+
+```go
+InputRules: []clicontract.Rule{
+    // A roster file only makes sense with an entry name.
+    clicontract.RequiresOn("roster-file", clicontract.Present("roster-entry"), "a roster file needs an entry"),
+    // The two prompt sources are alternatives.
+    clicontract.RequiresOn("prompt-file", clicontract.Absent("prompt"), "cannot combine with --prompt"),
+},
+```
+
+The vocabulary is availability's, in the field dialect: `RequiresOn`/`Requires`,
+`GateOn`/`Gate`, `Disables`, `AnyOf`, and `EitherOf` over `Present`, `Absent`,
+`Truthy`, `Falsy`, `Eq`, `In`, `NotIn`, `And`, `Or`, and `Not`. A rule names the
+flag it constrains in its field, and a `disables` target is a flag name. The
+dialects do not mix: availability rules compare conditions a consumer supplies
+at load, input rules compare the command's own inputs, and a declaration that
+crosses them fails at startup.
+
+The rules validate with the rest of the surface and render into the command's
+schema entry as `inputRules`, beside `flags`.
+
 ## Parse without running
 
 ```go
