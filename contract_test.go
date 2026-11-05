@@ -366,6 +366,21 @@ func TestRunHelpPaths(t *testing.T) {
 	}
 }
 
+func TestRunHelpPathsWithVersion(t *testing.T) {
+	adapter := &testAdapter{}
+	_, flagHelp, _ := runApp(t, testApp(), adapter, "--help")
+	code, cmdHelp, stderr := runApp(t, testApp(), adapter, "help")
+	if code != 0 {
+		t.Fatalf("exit code = %d, want 0 (stderr: %s)", code, stderr)
+	}
+	if cmdHelp != flagHelp {
+		t.Errorf("help output differs from --help output:\nhelp: %q\n--help: %q", cmdHelp, flagHelp)
+	}
+	if !strings.Contains(cmdHelp, "-v, --version") {
+		t.Errorf("help output = %q, want the -v, --version line", cmdHelp)
+	}
+}
+
 func TestRunVersionFlag(t *testing.T) {
 	adapter := &testAdapter{}
 	code, stdout, _ := runApp(t, testApp(), adapter, "--version")
