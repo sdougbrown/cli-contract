@@ -34,7 +34,7 @@ func availabilityApp() *clicontract.App {
 				Name:   "edit",
 				Short:  "edit a thing",
 				Handle: noopHandle,
-				Availability: []*clicontract.AvailabilityRule{
+				Availability: []*clicontract.Rule{
 					clicontract.Gate(clicontract.Not(clicontract.When("read_only")), "the profile is read-only"),
 				},
 			},
@@ -42,7 +42,7 @@ func availabilityApp() *clicontract.App {
 				Name:   "deploy",
 				Short:  "deploy to a region",
 				Handle: noopHandle,
-				Availability: []*clicontract.AvailabilityRule{
+				Availability: []*clicontract.Rule{
 					clicontract.Requires(clicontract.CondIn("region", "us", "eu"), "region is not served"),
 					clicontract.Disables([]string{"view"}, clicontract.When("read_only"), ""),
 				},
@@ -214,7 +214,7 @@ func TestAvailabilityDeclarationValidation(t *testing.T) {
 		{
 			name: "undeclared condition",
 			mutate: func(a *clicontract.App) {
-				a.Commands[1].Availability = []*clicontract.AvailabilityRule{
+				a.Commands[1].Availability = []*clicontract.Rule{
 					clicontract.Gate(clicontract.When("typo"), ""),
 				}
 			},
@@ -223,8 +223,8 @@ func TestAvailabilityDeclarationValidation(t *testing.T) {
 		{
 			name: "unknown expression op",
 			mutate: func(a *clicontract.App) {
-				a.Commands[1].Availability = []*clicontract.AvailabilityRule{
-					clicontract.Gate(&clicontract.AvailabilityExpr{Op: "eq", Condition: "read_only"}, ""),
+				a.Commands[1].Availability = []*clicontract.Rule{
+					clicontract.Gate(&clicontract.Expr{Op: "eq", Condition: "read_only"}, ""),
 				}
 			},
 			wantErr: `unknown op "eq"`,
@@ -250,7 +250,7 @@ func TestAvailabilityDeclarationValidation(t *testing.T) {
 				a.Commands[0].Subcommands = []*clicontract.Command{
 					{Name: "sub", Short: "s", Handle: noopHandle},
 				}
-				a.Commands[0].Availability = []*clicontract.AvailabilityRule{
+				a.Commands[0].Availability = []*clicontract.Rule{
 					clicontract.Gate(clicontract.When("read_only"), ""),
 				}
 			},
@@ -259,8 +259,8 @@ func TestAvailabilityDeclarationValidation(t *testing.T) {
 		{
 			name: "empty eitherOf branch",
 			mutate: func(a *clicontract.App) {
-				a.Commands[1].Availability = []*clicontract.AvailabilityRule{
-					clicontract.EitherOf("paths", map[string][]*clicontract.AvailabilityRule{
+				a.Commands[1].Availability = []*clicontract.Rule{
+					clicontract.EitherOf("paths", map[string][]*clicontract.Rule{
 						"empty": {},
 					}),
 				}
@@ -270,7 +270,7 @@ func TestAvailabilityDeclarationValidation(t *testing.T) {
 		{
 			name: "unknown rule type",
 			mutate: func(a *clicontract.App) {
-				a.Commands[1].Availability = []*clicontract.AvailabilityRule{
+				a.Commands[1].Availability = []*clicontract.Rule{
 					{Type: "oneOf"},
 				}
 			},
@@ -306,7 +306,7 @@ func compositeApp() *clicontract.App {
 				Name:   "quick",
 				Short:  "quick path",
 				Handle: noopHandle,
-				Availability: []*clicontract.AvailabilityRule{
+				Availability: []*clicontract.Rule{
 					clicontract.GateOn(
 						"testcli-quick",
 						clicontract.Or(
@@ -330,8 +330,8 @@ func compositeApp() *clicontract.App {
 				Name:   "either",
 				Short:  "either-of paths",
 				Handle: noopHandle,
-				Availability: []*clicontract.AvailabilityRule{
-					clicontract.EitherOf("auth", map[string][]*clicontract.AvailabilityRule{
+				Availability: []*clicontract.Rule{
+					clicontract.EitherOf("auth", map[string][]*clicontract.Rule{
 						"token": {clicontract.Gate(clicontract.CondEq("mode", "full"), "")},
 						"sso":   {clicontract.Gate(clicontract.CondEq("mode", "sso"), "")},
 					}),
@@ -341,7 +341,7 @@ func compositeApp() *clicontract.App {
 				Name:   "deploy",
 				Short:  "deploy to a region",
 				Handle: noopHandle,
-				Availability: []*clicontract.AvailabilityRule{
+				Availability: []*clicontract.Rule{
 					clicontract.Requires(clicontract.CondIn("region", "us", "eu"), "region is not served"),
 					clicontract.Disables([]string{"view"}, clicontract.When("read_only"), ""),
 				},
@@ -475,7 +475,7 @@ func TestAvailabilityDeclarationValidationMore(t *testing.T) {
 		{
 			name: "nil when",
 			mutate: func(a *clicontract.App) {
-				a.Commands[1].Availability = []*clicontract.AvailabilityRule{
+				a.Commands[1].Availability = []*clicontract.Rule{
 					clicontract.Gate(nil, ""),
 				}
 			},
@@ -484,7 +484,7 @@ func TestAvailabilityDeclarationValidationMore(t *testing.T) {
 		{
 			name: "anyOf with no rules",
 			mutate: func(a *clicontract.App) {
-				a.Commands[1].Availability = []*clicontract.AvailabilityRule{
+				a.Commands[1].Availability = []*clicontract.Rule{
 					clicontract.AnyOf(),
 				}
 			},
@@ -493,7 +493,7 @@ func TestAvailabilityDeclarationValidationMore(t *testing.T) {
 		{
 			name: "and with no operands",
 			mutate: func(a *clicontract.App) {
-				a.Commands[1].Availability = []*clicontract.AvailabilityRule{
+				a.Commands[1].Availability = []*clicontract.Rule{
 					clicontract.Gate(clicontract.And(), ""),
 				}
 			},
@@ -502,8 +502,8 @@ func TestAvailabilityDeclarationValidationMore(t *testing.T) {
 		{
 			name: "eitherOf without a group",
 			mutate: func(a *clicontract.App) {
-				a.Commands[1].Availability = []*clicontract.AvailabilityRule{
-					{Type: "eitherOf", Branches: map[string][]*clicontract.AvailabilityRule{
+				a.Commands[1].Availability = []*clicontract.Rule{
+					{Type: "eitherOf", Branches: map[string][]*clicontract.Rule{
 						"a": {clicontract.Gate(clicontract.When("read_only"), "")},
 					}},
 				}
@@ -513,7 +513,7 @@ func TestAvailabilityDeclarationValidationMore(t *testing.T) {
 		{
 			name: "anyOf operands target different tools",
 			mutate: func(a *clicontract.App) {
-				a.Commands[1].Availability = []*clicontract.AvailabilityRule{
+				a.Commands[1].Availability = []*clicontract.Rule{
 					clicontract.AnyOf(
 						clicontract.GateOn("testcli-view", clicontract.When("read_only"), ""),
 						clicontract.GateOn("testcli-deploy", clicontract.When("read_only"), ""),
@@ -533,7 +533,7 @@ func TestAvailabilityDeclarationValidationMore(t *testing.T) {
 		{
 			name: "eitherOf with no branches",
 			mutate: func(a *clicontract.App) {
-				a.Commands[1].Availability = []*clicontract.AvailabilityRule{
+				a.Commands[1].Availability = []*clicontract.Rule{
 					clicontract.EitherOf("paths", nil),
 				}
 			},
@@ -558,7 +558,7 @@ func TestManifestAvailabilityTargetsResolveThroughComposites(t *testing.T) {
 		),
 	)
 	app.Commands[2].Availability = append(app.Commands[2].Availability,
-		clicontract.EitherOf("relay", map[string][]*clicontract.AvailabilityRule{
+		clicontract.EitherOf("relay", map[string][]*clicontract.Rule{
 			"main": {clicontract.Disables([]string{"edit"}, clicontract.When("read_only"), "")},
 		}),
 	)
@@ -617,8 +617,8 @@ func TestAvailabilityEitherOfBranchFieldMismatch(t *testing.T) {
 	// The consumer's composite constructors panic when operands gate
 	// different tools; validation must catch it at the declaration site.
 	app := availabilityApp()
-	app.Commands[1].Availability = []*clicontract.AvailabilityRule{
-		clicontract.EitherOf("auth", map[string][]*clicontract.AvailabilityRule{
+	app.Commands[1].Availability = []*clicontract.Rule{
+		clicontract.EitherOf("auth", map[string][]*clicontract.Rule{
 			"a": {clicontract.GateOn("testcli-view", clicontract.When("read_only"), "")},
 			"b": {clicontract.GateOn("testcli-deploy", clicontract.When("read_only"), "")},
 		}),
@@ -632,7 +632,7 @@ func TestManifestAvailabilityMixedOperandMismatchFails(t *testing.T) {
 	// Declaration-time validation sees only one explicit field, so the
 	// error must surface in Manifest on the resolved rules.
 	app := availabilityApp()
-	app.Commands[1].Availability = []*clicontract.AvailabilityRule{
+	app.Commands[1].Availability = []*clicontract.Rule{
 		clicontract.AnyOf(
 			clicontract.GateOn("testcli-view", clicontract.When("read_only"), ""),
 			clicontract.Gate(clicontract.When("read_only"), ""),
@@ -650,7 +650,7 @@ func TestManifestAvailabilityRejectsParentRules(t *testing.T) {
 	app.Commands[0].Subcommands = []*clicontract.Command{
 		{Name: "sub", Short: "s", Handle: noopHandle},
 	}
-	app.Commands[0].Availability = []*clicontract.AvailabilityRule{
+	app.Commands[0].Availability = []*clicontract.Rule{
 		clicontract.Gate(clicontract.When("read_only"), ""),
 	}
 	if _, err := Manifest(app, Options{Binary: "testcli"}); err == nil {
@@ -662,7 +662,7 @@ func TestManifestAvailabilityUnknownFieldFails(t *testing.T) {
 	// An explicit Field on GateOn/RequiresOn must resolve against the
 	// generated tool set at startup, not at the consumer.
 	app := availabilityApp()
-	app.Commands[1].Availability = []*clicontract.AvailabilityRule{
+	app.Commands[1].Availability = []*clicontract.Rule{
 		clicontract.GateOn("testcli-vew", clicontract.When("read_only"), ""),
 	}
 	expectTreePanic(t, app, `unknown tool "testcli-vew"`, true)

@@ -130,7 +130,7 @@ type Command struct {
 	// rules over the App's AvailabilityConditions. Only leaf commands can
 	// gate; a command with subcommands fails validation when it declares
 	// rules. Rules without an explicit Field apply to this command's tool.
-	Availability []*AvailabilityRule
+	Availability []*Rule
 	// Handle runs the command and returns the result the adapter writes.
 	// Mutually exclusive with Raw.
 	Handle HandleFunc
