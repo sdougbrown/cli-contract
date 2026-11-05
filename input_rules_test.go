@@ -598,3 +598,38 @@ func TestEnforceNamedPath(t *testing.T) {
 		t.Errorf("stdout = %q, want the full command path", stdout)
 	}
 }
+
+// TestInputRulesGivenTogether pins the form for a pair that must appear
+// together: each flag gates on the other. Expressing it as two requires rules
+// is a dependency cycle, which the declaration validation rejects.
+func TestInputRulesGivenTogether(t *testing.T) {
+	app := inputRulesApp()
+	app.Commands[0].InputRules = []*Rule{
+		GateOn("roster-file", Present("roster-entry"), "a roster file needs an entry"),
+		GateOn("roster-entry", Present("roster-file"), "an entry needs a roster file"),
+	}
+
+	cases := []struct {
+		name   string
+		argv   []string
+		code   int
+		reason string
+	}{
+		{"both supplied", []string{"run", "--roster-file", "r.json", "--roster-entry", "main"}, 0, ""},
+		{"neither supplied", []string{"run"}, 0, ""},
+		{"file alone", []string{"run", "--roster-file", "r.json"}, 2, "a roster file needs an entry"},
+		{"entry alone", []string{"run", "--roster-entry", "main"}, 2, "an entry needs a roster file"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			adapter := &testAdapter{}
+			code, stdout, _ := runApp(t, app, adapter, tc.argv...)
+			if code != tc.code {
+				t.Fatalf("exit code = %d, want %d (%s)", code, tc.code, stdout)
+			}
+			if tc.reason != "" && !strings.Contains(stdout, tc.reason) {
+				t.Errorf("stdout = %q, want %q", stdout, tc.reason)
+			}
+		})
+	}
+}
