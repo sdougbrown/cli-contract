@@ -418,6 +418,9 @@ func buildTool(opts Options, timeout string, appName string, path []string, cmd 
 			if f.Name == name {
 				props[f.Name] = map[string]any{"type": schemaKind(f.Kind)}
 				bindings = append(bindings, Binding{Property: f.Name, Style: "space", Flag: "--" + f.Name})
+				if f.Required {
+					required = append(required, f.Name)
+				}
 			}
 		}
 	}

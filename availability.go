@@ -373,6 +373,12 @@ func validateInputRules(path string, rules []*Rule, flags []Flag) error {
 			return err
 		}
 	}
+	// A rule set that passes the checks above but that Umpire's schema rejects
+	// would otherwise fail at first dispatch, where it reads as a caller error
+	// instead of the declaration defect it is.
+	if _, err := compileInputRules(flags, rules); err != nil {
+		return UsageErrorf("command %q input rules do not compile: %v", path, err)
+	}
 	return nil
 }
 

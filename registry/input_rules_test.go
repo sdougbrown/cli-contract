@@ -262,3 +262,37 @@ func TestManifestInputRulesRejectSubjectless(t *testing.T) {
 		t.Fatalf("err = %v, want the subjectless rule refused", err)
 	}
 }
+
+// TestManifestRequiredCommonFlag keeps the manifest's required list in step
+// with the parse-time check: a common flag the tool exposes as required is
+// declared required in the schema too.
+func TestManifestRequiredCommonFlag(t *testing.T) {
+	app := inputRulesApp()
+	app.CommonFlags = []clicontract.Flag{
+		{Name: "token", Kind: clicontract.String, Usage: "auth token", Required: true},
+	}
+	manifest, err := Manifest(app, Options{Binary: "testcli", CommonFlags: []string{"token"}})
+	if err != nil {
+		t.Fatalf("manifest: %v", err)
+	}
+	var m struct {
+		Tools map[string]struct {
+			InputSchema struct {
+				Required []string `json:"required"`
+			} `json:"inputSchema"`
+		} `json:"tools"`
+	}
+	if err := json.Unmarshal(manifest, &m); err != nil {
+		t.Fatal(err)
+	}
+	required := m.Tools["testcli-run"].InputSchema.Required
+	found := false
+	for _, name := range required {
+		if name == "token" {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("required = %v, want the required common flag listed", required)
+	}
+}

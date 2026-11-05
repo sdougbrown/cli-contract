@@ -216,6 +216,11 @@ schema entry as `inputRules`, beside `flags`, and into the [registry](registry/r
 manifest's tool block under the same key, for cli-registry to check before it
 starts the process.
 
+`Run` and `Parse` enforce them too, so a handler never re-checks a relationship
+the declaration already states: a violating invocation is a caller error (exit
+2) carrying the rule's reason. A flag declared `Required` is checked at the same
+point, which moves that failure from the handler to the parser.
+
 ## Parse without running
 
 ```go
