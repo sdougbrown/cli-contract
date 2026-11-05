@@ -73,6 +73,7 @@ type ruleShape struct {
 // exprShape mirrors one Umpire condition expression on the wire.
 type exprShape struct {
 	Op        string      `json:"op"`
+	Field     string      `json:"field,omitempty"`
 	Condition string      `json:"condition,omitempty"`
 	Value     any         `json:"value,omitempty"`
 	Values    []any       `json:"values,omitempty"`
@@ -114,6 +115,7 @@ func ruleShapeFrom(rule *clicontract.Rule) ruleShape {
 func exprShapeFrom(expr *clicontract.Expr) exprShape {
 	out := exprShape{
 		Op:        expr.Op,
+		Field:     expr.Field,
 		Condition: expr.Condition,
 		Value:     expr.Value,
 		Values:    expr.Values,
@@ -142,6 +144,7 @@ type toolShape struct {
 	Command     []string       `json:"command"`
 	Timeout     string         `json:"timeout"`
 	InputSchema map[string]any `json:"inputSchema"`
+	InputRules  []ruleShape    `json:"inputRules,omitempty"`
 	Bindings    []Binding      `json:"bindings"`
 	Output      map[string]any `json:"output"`
 }
@@ -161,9 +164,9 @@ func Manifest(app *clicontract.App, opts Options) ([]byte, error) {
 	var walk func(path []string, cmd *clicontract.Command) error
 	walk = func(path []string, cmd *clicontract.Command) error {
 		if len(cmd.Subcommands) > 0 {
-			if len(cmd.Availability) > 0 {
+			if len(cmd.Availability) > 0 || len(cmd.InputRules) > 0 {
 				return fmt.Errorf(
-					"command %q declares availability rules but owns subcommands; only leaf commands run as tools",
+					"command %q declares rules but owns subcommands; only leaf commands run as tools",
 					strings.Join(path, " "),
 				)
 			}
@@ -174,10 +177,13 @@ func Manifest(app *clicontract.App, opts Options) ([]byte, error) {
 			}
 			return nil
 		}
-		tool := clicontract.ToolName(app.Name, strings.Join(path, "-"))
-		tools[tool] = buildTool(
-			opts, timeout, app.Name, path, cmd, app.CommonFlags)
-		rules = append(rules, resolvedRules(tool, cmd.Availability)...)
+		name := clicontract.ToolName(app.Name, strings.Join(path, "-"))
+		shape, err := buildTool(opts, timeout, app.Name, path, cmd, app.CommonFlags)
+		if err != nil {
+			return err
+		}
+		tools[name] = shape
+		rules = append(rules, resolvedRules(name, cmd.Availability)...)
 		return nil
 	}
 	for _, cmd := range app.Commands {
@@ -361,8 +367,10 @@ func resolveTargets(appName string, tools map[string]toolShape, rules []*clicont
 	return rules, nil
 }
 
-// buildTool renders one leaf command as a tool.
-func buildTool(opts Options, timeout string, appName string, path []string, cmd *clicontract.Command, common []clicontract.Flag) toolShape {
+// buildTool renders one leaf command as a tool. Input rules render beside the
+// input schema; a rule that names a flag the manifest omits is an error, so the
+// generated block cannot dangle.
+func buildTool(opts Options, timeout string, appName string, path []string, cmd *clicontract.Command, common []clicontract.Flag) (toolShape, error) {
 	full := strings.Join(path, " ")
 	command := append([]string{opts.Binary}, path...)
 	if t, ok := opts.Timeouts[full]; ok {
@@ -434,14 +442,116 @@ func buildTool(opts Options, timeout string, appName string, path []string, cmd 
 		"success_exit_codes": []int{0, 1, 2, 3, 4},
 	}
 
+	if err := validateInputRuleSubjects(full, cmd.InputRules, props); err != nil {
+		return toolShape{}, err
+	}
+
 	return toolShape{
 		Description: cmd.Short,
 		Command:     command,
 		Timeout:     timeout,
 		InputSchema: inputSchema,
+		InputRules:  ruleShapesFrom(cmd.InputRules),
 		Bindings:    bindings,
 		Output:      output,
+	}, nil
+}
+
+// ruleShapesFrom converts a declared rule list to its wire shape, skipping nil
+// entries the startup validation rejects anyway.
+func ruleShapesFrom(rules []*clicontract.Rule) []ruleShape {
+	if len(rules) == 0 {
+		return nil
 	}
+	out := make([]ruleShape, 0, len(rules))
+	for _, rule := range rules {
+		if rule == nil {
+			continue
+		}
+		out = append(out, ruleShapeFrom(rule))
+	}
+	return out
+}
+
+// validateInputRuleSubjects checks a command's input rules against the
+// properties the tool exposes. A rule naming a flag the manifest omits — a
+// common flag outside Options.CommonFlags — would leave the consumer a rule it
+// cannot evaluate, so it fails here instead.
+func validateInputRuleSubjects(path string, rules []*clicontract.Rule, props map[string]any) error {
+	check := func(flag string) error {
+		if _, ok := props[flag]; ok {
+			return nil
+		}
+		return fmt.Errorf(
+			"command %q input rule names %q, which this manifest does not expose as a property; "+
+				"add it to Options.CommonFlags or drop the rule",
+			path, flag,
+		)
+	}
+	var walkExpr func(*clicontract.Expr) error
+	walkExpr = func(expr *clicontract.Expr) error {
+		if expr == nil {
+			return nil
+		}
+		if expr.Field != "" {
+			if err := check(expr.Field); err != nil {
+				return err
+			}
+		}
+		for _, inner := range expr.Exprs {
+			if err := walkExpr(inner); err != nil {
+				return err
+			}
+		}
+		return walkExpr(expr.Expr)
+	}
+	var walkRule func(*clicontract.Rule) error
+	walkRule = func(rule *clicontract.Rule) error {
+		if rule == nil {
+			return nil
+		}
+		// Manifest is a direct entry point, so it repeats the declaration
+		// checks it depends on: a gate rule with no subject would render an
+		// input rule that constrains nothing.
+		if (rule.Type == clicontract.RuleEnabledWhen || rule.Type == clicontract.RuleRequires) && rule.Field == "" {
+			return fmt.Errorf(
+				"command %q input rule (%s) has no field; an input rule names the flag it constrains",
+				path, rule.Type,
+			)
+		}
+		if rule.Field != "" {
+			if err := check(rule.Field); err != nil {
+				return err
+			}
+		}
+		for _, target := range rule.Targets {
+			if err := check(target); err != nil {
+				return err
+			}
+		}
+		if err := walkExpr(rule.When); err != nil {
+			return err
+		}
+		for _, inner := range rule.Rules {
+			if err := walkRule(inner); err != nil {
+				return err
+			}
+		}
+		for _, branch := range rule.Branches {
+			for _, inner := range branch {
+				if err := walkRule(inner); err != nil {
+					return err
+				}
+			}
+		}
+		return nil
+	}
+	for _, rule := range rules {
+		if err := walkRule(rule); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // schemaKind names the JSON Schema type for one flag kind.

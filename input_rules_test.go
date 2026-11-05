@@ -228,11 +228,11 @@ func TestInputRulesDeclarationValidation(t *testing.T) {
 	}
 }
 
-// TestInputRulesNameInheritedFlags pins the flag surface an input rule
-// validates against: a subcommand's rule may name a flag inherited from an
-// ancestor's persistent set. A regression that omitted inherited flags from
-// the surface would reject a valid declaration.
-func TestInputRulesNameInheritedFlags(t *testing.T) {
+// TestInputRulesRejectInheritedFlags pins the flags an input rule may name: the
+// app's common flags and the leaf's own. An ancestor's persistent flag parses on
+// the leaf but cannot become a manifest property, because the argv binding has
+// no way to place it before the subcommand name.
+func TestInputRulesRejectInheritedFlags(t *testing.T) {
 	app := &App{
 		Name:      "t",
 		Version:   "v1",
@@ -254,12 +254,12 @@ func TestInputRulesNameInheritedFlags(t *testing.T) {
 			}},
 		}},
 	}
-	app.Tree()
+	expectDeclarationPanic(t, app, `references unknown flag "socket"`)
 
-	app.Commands[0].Subcommands[0].InputRules = []*Rule{
-		RequiresOn("force", Present("sockett"), "a typo"),
-	}
-	expectDeclarationPanic(t, app, `references unknown flag "sockett"`)
+	// A common flag carries a property, so a rule may name it.
+	app.CommonFlags = []Flag{{Name: "socket", Kind: String, Usage: "control socket"}}
+	app.Commands[0].PersistentFlags = nil
+	app.Tree()
 }
 
 // TestSchemaRendersInputRules pins the rules' place and shape in the schema

@@ -347,12 +347,24 @@ func validateAvailabilityRules(path string, rules []*Rule, checks *availabilityC
 	return nil
 }
 
-// validateInputRules checks one command's input rules against the flag surface
-// the command parses, so a rule naming a flag the caller cannot supply fails
-// at the declaration site rather than in a generated manifest.
-func validateInputRules(path string, rules []*Rule, surface []surfaceFlag) error {
-	fields := make(map[string]bool, len(surface))
-	for _, f := range surface {
+// exposableSurface lists the flags a tool can carry properties for: the app's
+// common flags and the leaf's own. An ancestor's persistent flag parses on the
+// leaf but cannot appear in the tool's argv binding, because the binding has no
+// way to place it before the subcommand name. A rule naming such a flag is
+// therefore not expressible in a manifest, and is rejected at the declaration
+// site instead.
+func exposableSurface(common, own []Flag) []Flag {
+	out := make([]Flag, 0, len(common)+len(own))
+	out = append(out, common...)
+	return append(out, own...)
+}
+
+// validateInputRules checks one command's input rules against the flags the
+// tool can expose, so a rule naming a flag no property can carry fails at the
+// declaration site rather than in a generated manifest.
+func validateInputRules(path string, rules []*Rule, flags []Flag) error {
+	fields := make(map[string]bool, len(flags))
+	for _, f := range flags {
 		fields[f.Name] = true
 	}
 	set := ruleSet{label: "input", fields: fields}
