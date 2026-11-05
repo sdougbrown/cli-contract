@@ -208,7 +208,7 @@ func TestInputRulesDeclarationValidation(t *testing.T) {
 					Disables([]string{"prompt"}, Present("prompt-file"), ""),
 				}
 			},
-			want: "input rules do not compile",
+			want: "form a dependency cycle",
 		},
 		{
 			name: "rules on a command that owns subcommands",
@@ -632,4 +632,28 @@ func TestInputRulesGivenTogether(t *testing.T) {
 			}
 		})
 	}
+}
+
+// TestInputRuleCycleNamesTheFix pins the guidance a cycle carries: the loop
+// itself, and the constructor that expresses the same intent without an
+// ordering edge.
+func TestInputRuleCycleNamesTheFix(t *testing.T) {
+	app := inputRulesApp()
+	app.Commands[0].InputRules = []*Rule{
+		RequiresOn("roster-file", Present("roster-entry"), "a roster file needs an entry"),
+		RequiresOn("roster-entry", Present("roster-file"), "an entry needs a roster file"),
+	}
+	defer func() {
+		r := recover()
+		if r == nil {
+			t.Fatal("Tree accepted a rule cycle")
+		}
+		msg := fmt.Sprint(r)
+		for _, want := range []string{"dependency cycle", "roster-file", "roster-entry", "EnabledOn"} {
+			if !strings.Contains(msg, want) {
+				t.Errorf("panic %q does not include %q", msg, want)
+			}
+		}
+	}()
+	app.Tree()
 }

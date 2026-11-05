@@ -214,7 +214,8 @@ crosses them fails at startup.
 Every rule above is one-directional: a supplied `--roster-file` needs
 `--roster-entry`, while an entry can stand alone. A pair that must be given
 together gates each flag on the other instead. Two `requires` rules pointing at
-each other form a dependency cycle, which Umpire rejects at startup:
+each other form a dependency cycle, which fails at startup with the loop and the
+constructor to use:
 
 ```go
 InputRules: []clicontract.Rule{

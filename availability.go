@@ -193,7 +193,9 @@ func Enabled(when *Expr, reason string) *Rule {
 }
 
 // EnabledOn is Enabled targeting an explicitly named subject: a tool in the
-// availability set, a flag in the input set.
+// availability set, a flag in the input set. An enabledWhen rule adds no
+// ordering edge, so this is the constructor for flags that must be supplied
+// together: gate each flag on the other.
 func EnabledOn(field string, when *Expr, reason string) *Rule {
 	return enabledRule(field, RuleEnabledWhen, when, reason, "condition not met")
 }
@@ -205,7 +207,9 @@ func Requires(when *Expr, reason string) *Rule {
 }
 
 // RequiresOn is Requires targeting an explicitly named subject: a tool in the
-// availability set, a flag in the input set.
+// availability set, a flag in the input set. A requires rule adds a dependency
+// edge, so two rules pointing at each other are a cycle and fail validation;
+// gate each flag on the other with EnabledOn instead.
 func RequiresOn(field string, when *Expr, reason string) *Rule {
 	return enabledRule(field, RuleRequires, when, reason, "required condition not met")
 }
@@ -377,9 +381,27 @@ func validateInputRules(path string, rules []*Rule, flags []Flag) error {
 	// would otherwise fail at first dispatch, where it reads as a caller error
 	// instead of the declaration defect it is.
 	if _, err := compileInputRules(flags, rules); err != nil {
-		return UsageErrorf("command %q input rules do not compile: %v", path, err)
+		return inputRuleCompileError(path, err)
 	}
 	return nil
+}
+
+// cycleMarker is the phrase Umpire's schema compiler uses when the ordering
+// edges derived from requires rules form a loop. It is a hint, not a contract:
+// an unrecognized failure falls through to the generic wording.
+const cycleMarker = "Cycle detected: "
+
+// inputRuleCompileError reports a rule set the Umpire runtime rejects. A cycle
+// is the one such failure a writer fixes by choosing another constructor, so it
+// names the loop and that constructor.
+func inputRuleCompileError(path string, err error) error {
+	if _, loop, ok := strings.Cut(err.Error(), cycleMarker); ok {
+		return UsageErrorf(
+			"command %q input rules form a dependency cycle (%s); requires adds an ordering edge, so flags that must be supplied together gate each other with EnabledOn",
+			path, strings.TrimSpace(loop),
+		)
+	}
+	return UsageErrorf("command %q input rules do not compile: %v", path, err)
 }
 
 // ruleSet identifies which declaration slot a rule list came from. The two
