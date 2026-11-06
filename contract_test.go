@@ -253,6 +253,7 @@ type diagAdapter struct {
 	*testAdapter
 	dispatchLine   string
 	handlerLine    string
+	validateErr    error
 	gotDispatchCmd string
 	gotDispatchErr error
 	gotHandlerInv  Invocation
@@ -267,6 +268,15 @@ func (a *diagAdapter) DispatchDiagnostic(command string, err error) string {
 func (a *diagAdapter) HandlerDiagnostic(inv Invocation, err error) string {
 	a.gotHandlerInv, a.gotHandlerErr = inv, err
 	return a.handlerLine
+}
+
+// validateErr fails the next Validate call, keeping the rest of the
+// embedded adapter's behavior.
+func (a *diagAdapter) Validate(inv Invocation) error {
+	if a.validateErr != nil {
+		return a.validateErr
+	}
+	return a.testAdapter.Validate(inv)
 }
 
 func TestRunDispatchDiagnostics(t *testing.T) {
@@ -412,6 +422,37 @@ func TestRunDispatchDiagnostics(t *testing.T) {
 		}
 		if adapter.gotDispatchCmd != "" {
 			t.Errorf("DispatchDiagnostic ran for a raw-command failure (%q)", adapter.gotDispatchCmd)
+		}
+	})
+
+	t.Run("Validate rejections keep HandlerDiagnostics and the raised error", func(t *testing.T) {
+		validateErr := errors.New("probe rejected")
+		adapter := &diagAdapter{testAdapter: &testAdapter{}, handlerLine: "handler line", validateErr: validateErr}
+		code, stdout, stderr := runApp(t, testApp(), adapter, "reconcile", "u")
+		if code != 2 {
+			t.Fatalf("exit code = %d, want 2 (stderr: %s)", code, stderr)
+		}
+		if stderr != "handler line\n" {
+			t.Errorf("stderr = %q, want the handler diagnostic", stderr)
+		}
+		if adapter.gotDispatchCmd != "" {
+			t.Errorf("DispatchDiagnostic ran for a Validate rejection (%q)", adapter.gotDispatchCmd)
+		}
+		if adapter.gotHandlerInv.Command != "reconcile" {
+			t.Errorf("HandlerDiagnostic command = %q, want reconcile", adapter.gotHandlerInv.Command)
+		}
+		// The hook sees the error the adapter raised, not the
+		// usage-classified copy: identity, not just message equality.
+		if adapter.gotHandlerErr != validateErr {
+			t.Errorf("HandlerDiagnostic err = %v, want the raised error itself", adapter.gotHandlerErr)
+		}
+		// The stdout envelope keeps the usage classification.
+		var envelope map[string]any
+		if err := json.Unmarshal([]byte(stdout), &envelope); err != nil {
+			t.Fatalf("stdout is not one JSON value: %v (%q)", err, stdout)
+		}
+		if envelope["error"].(map[string]any)["code"] != "usage" {
+			t.Errorf("envelope error = %v, want usage code", envelope["error"])
 		}
 	})
 

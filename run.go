@@ -41,13 +41,15 @@ func Run(app *App, adapter Adapter, argv []string, stdout, stderr io.Writer) int
 		// Help never reaches here (cobra writes plain help and returns
 		// nil); every error that does is a caller error with the usage
 		// envelope and exit 2.
+		raised := err
 		err = asUsageError(err)
 		adapter.Write(stdout, adapter.ErrorResult(command, err))
 		if exec.ran || exec.rawRan {
 			// A dispatched command owns the failure — a Validate rejection
 			// or a raw-output command's error — so the handler-diagnostic
-			// hook formats its line.
-			writeDiagnostic(adapter, stderr, exec.inv, err)
+			// hook formats its line, and it sees the error the handler
+			// raised, not the usage-classified copy.
+			writeDiagnostic(adapter, stderr, exec.inv, raised)
 		} else {
 			// Dispatch-level errors are self-prefixed: the messages are
 			// built under the app's error prefix at the validation sites.
