@@ -45,7 +45,7 @@ func Run(app *App, adapter Adapter, argv []string, stdout, stderr io.Writer) int
 		adapter.Write(stdout, adapter.ErrorResult(command, err))
 		// Dispatch-level errors are self-prefixed: the messages are built
 		// under the app's error prefix at the validation sites.
-		fmt.Fprintln(stderr, err.Error())
+		writeDispatchDiagnostic(adapter, stderr, command, err)
 		return adapter.ExitCode(Invocation{Command: command}, nil, err)
 	}
 	// Help paths (bare --help, the help command, <command> --help) print
@@ -104,6 +104,19 @@ func Run(app *App, adapter Adapter, argv []string, stdout, stderr io.Writer) int
 		}
 	}
 	return adapter.ExitCode(exec.inv, result, exec.handlerErr)
+}
+
+// writeDispatchDiagnostic writes one dispatch-failure diagnostic to stderr.
+// The default is the error's message; the DispatchDiagnostics extension
+// formats it (or silences it with an empty string).
+func writeDispatchDiagnostic(adapter Adapter, stderr io.Writer, command string, err error) {
+	line := err.Error()
+	if dd, ok := adapter.(DispatchDiagnostics); ok {
+		line = dd.DispatchDiagnostic(command, err)
+	}
+	if line != "" {
+		fmt.Fprintln(stderr, line)
+	}
 }
 
 // writeDiagnostic writes one handler-failure diagnostic to stderr. The
@@ -177,6 +190,18 @@ func readyTree(a *App, exec *execution, runHandlers bool, argv []string, stdout,
 // message; an empty string prints nothing.
 type HandlerDiagnostics interface {
 	HandlerDiagnostic(inv Invocation, err error) string
+}
+
+// DispatchDiagnostics is an optional Adapter extension that formats the
+// stderr diagnostic for dispatch-level failures (unknown command, bad flag,
+// bad positional). The default prints the error's message; an empty string
+// prints nothing. HandlerDiagnostics is the corresponding extension for
+// handler failures.
+//
+// It receives the command name rather than an Invocation: dispatch-level
+// failures happen before any command dispatched, so no Invocation exists.
+type DispatchDiagnostics interface {
+	DispatchDiagnostic(command string, err error) string
 }
 
 // Parse parses argv (without the program name) without running anything:

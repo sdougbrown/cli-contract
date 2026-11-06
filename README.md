@@ -141,6 +141,14 @@ Optional extensions:
 - `TestSeams` — test-only crash (`BeforeWrite`) and signal injection
   (`PendingSignal`) points; production adapters skip it.
 - `AfterWrite` — monitor-facing stderr summaries after the result is written.
+- `HandlerDiagnostics` — format or silence the stderr diagnostic for
+  handler failures (`HandlerDiagnostic(inv, err) string`; an empty string
+  prints nothing).
+- `DispatchDiagnostics` — format or silence the stderr diagnostic for
+  dispatch-level failures, unknown command, bad flag, or bad positional
+  (`DispatchDiagnostic(command, err) string`; an empty string prints
+  nothing). It takes the command name rather than an Invocation, since no
+  Invocation exists before dispatch.
 
 ## Schema
 
