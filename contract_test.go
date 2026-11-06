@@ -272,8 +272,8 @@ func (a *diagAdapter) HandlerDiagnostic(inv Invocation, err error) string {
 func TestRunDispatchDiagnostics(t *testing.T) {
 	t.Run("default prints the raw message", func(t *testing.T) {
 		_, _, stderr := runApp(t, testApp(), &testAdapter{}, "reconcile", "--bogus", "u1")
-		if stderr == "" {
-			t.Fatal("stderr is empty, want the raw dispatch diagnostic")
+		if stderr != "reconcile: unknown flag: --bogus\n" {
+			t.Errorf("stderr = %q, want the raw unprefixed message", stderr)
 		}
 	})
 
@@ -313,6 +313,27 @@ func TestRunDispatchDiagnostics(t *testing.T) {
 		}
 		if stderr != "" {
 			t.Errorf("stderr = %q, want silence", stderr)
+		}
+	})
+
+	t.Run("single-dash retry reports the first pass's error", func(t *testing.T) {
+		adapter := &diagAdapter{testAdapter: &testAdapter{}, dispatchLine: "hint"}
+		// Two passes: -head rewrites to --head, the retry then fails on the
+		// missing value, and the extension must see the first pass's error
+		// and the original command, not anything from the rewrite.
+		code, _, stderr := runApp(t, testApp(), adapter, "reconcile", "u1", "-head")
+		if code != 2 {
+			t.Fatalf("exit code = %d, want 2 (stderr: %s)", code, stderr)
+		}
+		if stderr != "hint\n" {
+			t.Errorf("stderr = %q, want the extension's line", stderr)
+		}
+		if adapter.gotDispatchCmd != "reconcile" {
+			t.Errorf("command = %q, want reconcile", adapter.gotDispatchCmd)
+		}
+		var ue *UsageError
+		if !errors.As(adapter.gotDispatchErr, &ue) || !strings.Contains(ue.Message, "unknown shorthand") {
+			t.Errorf("err = %v, want the first pass's unknown-shorthand *UsageError", adapter.gotDispatchErr)
 		}
 	})
 
