@@ -41,11 +41,20 @@ func Run(app *App, adapter Adapter, argv []string, stdout, stderr io.Writer) int
 		// Help never reaches here (cobra writes plain help and returns
 		// nil); every error that does is a caller error with the usage
 		// envelope and exit 2.
+		raised := err
 		err = asUsageError(err)
 		adapter.Write(stdout, adapter.ErrorResult(command, err))
-		// Dispatch-level errors are self-prefixed: the messages are built
-		// under the app's error prefix at the validation sites.
-		fmt.Fprintln(stderr, err.Error())
+		if exec.ran || exec.rawRan {
+			// A dispatched command owns the failure — a Validate rejection
+			// or a raw-output command's error — so the handler-diagnostic
+			// hook formats its line, and it sees the error the handler
+			// raised, not the usage-classified copy.
+			writeDiagnostic(adapter, stderr, exec.inv, raised)
+		} else {
+			// Dispatch-level errors are self-prefixed: the messages are
+			// built under the app's error prefix at the validation sites.
+			writeDispatchDiagnostic(adapter, stderr, exec.diagCommand(), err)
+		}
 		return adapter.ExitCode(Invocation{Command: command}, nil, err)
 	}
 	// Help paths (bare --help, the help command, <command> --help) print
@@ -106,6 +115,25 @@ func Run(app *App, adapter Adapter, argv []string, stdout, stderr io.Writer) int
 	return adapter.ExitCode(exec.inv, result, exec.handlerErr)
 }
 
+// writeDiagnosticLine writes one stderr diagnostic line; an empty line
+// prints nothing. Both diagnostic hooks share this one write path.
+func writeDiagnosticLine(stderr io.Writer, line string) {
+	if line != "" {
+		fmt.Fprintln(stderr, line)
+	}
+}
+
+// writeDispatchDiagnostic writes one dispatch-failure diagnostic to stderr.
+// The default is the error's message; the DispatchDiagnostics extension
+// formats it (or silences it with an empty string).
+func writeDispatchDiagnostic(adapter Adapter, stderr io.Writer, command string, err error) {
+	line := err.Error()
+	if dd, ok := adapter.(DispatchDiagnostics); ok {
+		line = dd.DispatchDiagnostic(command, err)
+	}
+	writeDiagnosticLine(stderr, line)
+}
+
 // writeDiagnostic writes one handler-failure diagnostic to stderr. The
 // default is the error's message; the HandlerDiagnostics extension formats
 // it (or silences it with an empty string).
@@ -114,9 +142,7 @@ func writeDiagnostic(adapter Adapter, stderr io.Writer, inv Invocation, err erro
 	if hd, ok := adapter.(HandlerDiagnostics); ok {
 		line = hd.HandlerDiagnostic(inv, err)
 	}
-	if line != "" {
-		fmt.Fprintln(stderr, line)
-	}
+	writeDiagnosticLine(stderr, line)
 }
 
 // execute builds the tree and runs the parse-and-dispatch passes over argv,
@@ -135,30 +161,37 @@ func writeDiagnostic(adapter Adapter, stderr io.Writer, inv Invocation, err erro
 // parse error that triggered it.
 func (a *App) execute(exec *execution, runHandlers bool, argv []string, stdout, stderr io.Writer, ctx context.Context) error {
 	var firstErr error
+	var firstCmd *cobra.Command
 	limit := len(effectiveArgv(argv)) + 1
 	for attempt := 0; attempt < limit; attempt++ {
 		// Each pass records its own flag failure: the command cobra
 		// resolved is what the next rewrite is scoped to.
 		exec.flagErr, exec.flagErrCmd = nil, nil
 		root := readyTree(a, exec, runHandlers, argv, stdout, stderr)
-		err := root.ExecuteContext(ctx)
+		// ExecuteContext is ExecuteContextC with the command discarded; the
+		// command is what the dispatch-diagnostic extensions need.
+		cmd, err := root.ExecuteContextC(ctx)
 		if err == nil {
 			return nil
 		}
 		if attempt == 0 {
-			firstErr = err
+			firstErr, firstCmd = err, cmd
 		}
 		if exec.ran || exec.rawRan {
 			return err
 		}
 		retryArgv := a.retryArgv(exec, root, argv)
 		if retryArgv == nil {
+			// The reported error is the first pass's: its own resolved
+			// command must pair with it, not the last pass's.
+			exec.failCmd = firstCmd
 			return firstErr
 		}
 		// The failure preceded every RunE, so no handler has run: rebuild
 		// for clean flag state and parse the rewritten argv again.
 		argv = retryArgv
 	}
+	exec.failCmd = firstCmd
 	return firstErr
 }
 
@@ -173,10 +206,33 @@ func readyTree(a *App, exec *execution, runHandlers bool, argv []string, stdout,
 }
 
 // HandlerDiagnostics is an optional Adapter extension that formats the
-// stderr diagnostic for handler failures. The default prints the error's
-// message; an empty string prints nothing.
+// stderr diagnostic for handler-owned failures: a dispatched command's
+// error, a Validate rejection, or a raw-output command's failure. The
+// default prints the error's message; an empty string prints nothing.
 type HandlerDiagnostics interface {
 	HandlerDiagnostic(inv Invocation, err error) string
+}
+
+// DispatchDiagnostics is an optional Adapter extension that formats the
+// stderr diagnostic for failures before dispatch (unknown command, bad
+// flag, bad positional). Once a command dispatches, its failure goes to
+// HandlerDiagnostics instead. The default prints the error's message; an
+// empty string prints nothing.
+//
+// The command argument is the path the failure resolved to: names below
+// the root joined with spaces ("store reset"), or the app name when the
+// failure resolved to the root. It is the same path the diagnostic
+// message is prefixed with. It is a path rather than an Invocation
+// because no Invocation exists before dispatch.
+type DispatchDiagnostics interface {
+	DispatchDiagnostic(command string, err error) string
+}
+
+// diagCommand names the command for the dispatch-diagnostic extensions:
+// the path of the command cobra resolved on the first failing pass, the
+// same path the diagnostic message is prefixed with.
+func (exec *execution) diagCommand() string {
+	return exec.app.pathOf(exec.failCmd)
 }
 
 // Parse parses argv (without the program name) without running anything:

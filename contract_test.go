@@ -247,6 +247,237 @@ func TestRunUsageErrors(t *testing.T) {
 	}
 }
 
+// diagAdapter extends testAdapter with both diagnostic extensions; each
+// field is the line the corresponding extension returns.
+type diagAdapter struct {
+	*testAdapter
+	dispatchLine   string
+	handlerLine    string
+	validateErr    error
+	gotDispatchCmd string
+	gotDispatchErr error
+	gotHandlerInv  Invocation
+	gotHandlerErr  error
+}
+
+func (a *diagAdapter) DispatchDiagnostic(command string, err error) string {
+	a.gotDispatchCmd, a.gotDispatchErr = command, err
+	return a.dispatchLine
+}
+
+func (a *diagAdapter) HandlerDiagnostic(inv Invocation, err error) string {
+	a.gotHandlerInv, a.gotHandlerErr = inv, err
+	return a.handlerLine
+}
+
+// validateErr fails the next Validate call, keeping the rest of the
+// embedded adapter's behavior.
+func (a *diagAdapter) Validate(inv Invocation) error {
+	if a.validateErr != nil {
+		return a.validateErr
+	}
+	return a.testAdapter.Validate(inv)
+}
+
+func TestRunDispatchDiagnostics(t *testing.T) {
+	t.Run("default prints the raw message", func(t *testing.T) {
+		_, _, stderr := runApp(t, testApp(), &testAdapter{}, "reconcile", "--bogus", "u1")
+		if stderr != "reconcile: unknown flag: --bogus\n" {
+			t.Errorf("stderr = %q, want the raw unprefixed message", stderr)
+		}
+	})
+
+	t.Run("extension replaces the line", func(t *testing.T) {
+		adapter := &diagAdapter{testAdapter: &testAdapter{}, dispatchLine: "Run `wt reconcile --help` for usage."}
+		code, stdout, stderr := runApp(t, testApp(), adapter, "reconcile", "--bogus", "u1")
+		if code != 2 {
+			t.Fatalf("exit code = %d, want 2 (stderr: %s)", code, stderr)
+		}
+		if stderr != "Run `wt reconcile --help` for usage.\n" {
+			t.Errorf("stderr = %q, want the extension's line", stderr)
+		}
+		if adapter.gotDispatchCmd != "reconcile" {
+			t.Errorf("command = %q, want reconcile", adapter.gotDispatchCmd)
+		}
+		var ue *UsageError
+		if !errors.As(adapter.gotDispatchErr, &ue) {
+			t.Errorf("err = %v, want a *UsageError", adapter.gotDispatchErr)
+		}
+		// The stdout envelope keeps the usage classification and the raw
+		// message; only the stderr line changes.
+		var envelope map[string]any
+		if err := json.Unmarshal([]byte(stdout), &envelope); err != nil {
+			t.Fatalf("stdout is not one JSON value: %v (%q)", err, stdout)
+		}
+		errObj := envelope["error"].(map[string]any)
+		if errObj["code"] != "usage" || errObj["message"] == "Run `wt reconcile --help` for usage." {
+			t.Errorf("envelope error = %v, want usage code with the raw message", errObj)
+		}
+	})
+
+	t.Run("empty string silences", func(t *testing.T) {
+		adapter := &diagAdapter{testAdapter: &testAdapter{}}
+		code, _, stderr := runApp(t, testApp(), adapter, "reconcile", "--bogus", "u1")
+		if code != 2 {
+			t.Fatalf("exit code = %d, want 2", code)
+		}
+		if stderr != "" {
+			t.Errorf("stderr = %q, want silence", stderr)
+		}
+	})
+
+	t.Run("nested failure gets the full path", func(t *testing.T) {
+		adapter := &diagAdapter{testAdapter: &testAdapter{}, dispatchLine: "hint"}
+		code, _, stderr := runApp(t, testApp(), adapter, "store", "reset", "--bogus")
+		if code != 2 {
+			t.Fatalf("exit code = %d, want 2 (stderr: %s)", code, stderr)
+		}
+		if adapter.gotDispatchCmd != "store reset" {
+			t.Errorf("command = %q, want the resolved path store reset", adapter.gotDispatchCmd)
+		}
+		if stderr != "hint\n" {
+			t.Errorf("stderr = %q, want the extension's line", stderr)
+		}
+	})
+
+	t.Run("unresolved command gets the app name", func(t *testing.T) {
+		adapter := &diagAdapter{testAdapter: &testAdapter{}, dispatchLine: "hint"}
+		code, _, stderr := runApp(t, testApp(), adapter, "bogus")
+		if code != 2 {
+			t.Fatalf("exit code = %d, want 2 (stderr: %s)", code, stderr)
+		}
+		if adapter.gotDispatchCmd != "testcli" {
+			t.Errorf("command = %q, want the app name testcli", adapter.gotDispatchCmd)
+		}
+		if stderr != "hint\n" {
+			t.Errorf("stderr = %q, want the extension's line", stderr)
+		}
+	})
+
+	t.Run("missing subcommand gets the app name", func(t *testing.T) {
+		adapter := &diagAdapter{testAdapter: &testAdapter{}, dispatchLine: "hint"}
+		code, _, stderr := runApp(t, testApp(), adapter)
+		if code != 2 {
+			t.Fatalf("exit code = %d, want 2 (stderr: %s)", code, stderr)
+		}
+		if adapter.gotDispatchCmd != "testcli" {
+			t.Errorf("command = %q, want the app name testcli", adapter.gotDispatchCmd)
+		}
+	})
+
+	t.Run("single-dash retry reports the first pass's error", func(t *testing.T) {
+		adapter := &diagAdapter{testAdapter: &testAdapter{}, dispatchLine: "hint"}
+		// Two passes: -head rewrites to --head, the retry then fails on the
+		// missing value, and the extension must see the first pass's error
+		// and the original command, not anything from the rewrite.
+		code, _, stderr := runApp(t, testApp(), adapter, "reconcile", "u1", "-head")
+		if code != 2 {
+			t.Fatalf("exit code = %d, want 2 (stderr: %s)", code, stderr)
+		}
+		if stderr != "hint\n" {
+			t.Errorf("stderr = %q, want the extension's line", stderr)
+		}
+		if adapter.gotDispatchCmd != "reconcile" {
+			t.Errorf("command = %q, want reconcile", adapter.gotDispatchCmd)
+		}
+		var ue *UsageError
+		if !errors.As(adapter.gotDispatchErr, &ue) || !strings.Contains(ue.Message, "unknown shorthand") {
+			t.Errorf("err = %v, want the first pass's unknown-shorthand *UsageError", adapter.gotDispatchErr)
+		}
+	})
+
+	t.Run("masked first error keeps its own command", func(t *testing.T) {
+		adapter := &diagAdapter{testAdapter: &testAdapter{}}
+		// Two passes: -state-dir fails at the root (unknown command "x"
+		// blocks resolution), the rewrite consumes x as --state-dir's
+		// value, and pass 1 resolves the deeper store reset and fails
+		// there. The reported error is pass 0's, so the extension must see
+		// the root's app name, not store reset.
+		code, _, _ := runApp(t, testApp(), adapter, "-state-dir", "x", "-json", "store", "reset", "extra")
+		if code != 2 {
+			t.Fatalf("exit code = %d, want 2", code)
+		}
+		if adapter.gotDispatchCmd != "testcli" {
+			t.Errorf("command = %q, want the app name paired with the first pass's error", adapter.gotDispatchCmd)
+		}
+	})
+
+	t.Run("raw-command failures keep HandlerDiagnostics", func(t *testing.T) {
+		app := &App{Name: "testcli", Commands: []*Command{{
+			Name:  "dump",
+			Short: "dump the state",
+			Raw: func(ctx context.Context, inv Invocation, stdout io.Writer) error {
+				return errors.New("dump failed")
+			},
+		}}}
+		adapter := &diagAdapter{testAdapter: &testAdapter{}, handlerLine: "handler line"}
+		code, _, stderr := runApp(t, app, adapter, "dump")
+		// The usage classification of a raw failure is the pre-existing
+		// behavior; the change under test is only the stderr hook.
+		if code != 2 {
+			t.Fatalf("exit code = %d, want 2 (stderr: %s)", code, stderr)
+		}
+		if stderr != "handler line\n" {
+			t.Errorf("stderr = %q, want the handler diagnostic", stderr)
+		}
+		if adapter.gotDispatchCmd != "" {
+			t.Errorf("DispatchDiagnostic ran for a raw-command failure (%q)", adapter.gotDispatchCmd)
+		}
+	})
+
+	t.Run("Validate rejections keep HandlerDiagnostics and the raised error", func(t *testing.T) {
+		validateErr := errors.New("probe rejected")
+		adapter := &diagAdapter{testAdapter: &testAdapter{}, handlerLine: "handler line", validateErr: validateErr}
+		code, stdout, stderr := runApp(t, testApp(), adapter, "reconcile", "u")
+		if code != 2 {
+			t.Fatalf("exit code = %d, want 2 (stderr: %s)", code, stderr)
+		}
+		if stderr != "handler line\n" {
+			t.Errorf("stderr = %q, want the handler diagnostic", stderr)
+		}
+		if adapter.gotDispatchCmd != "" {
+			t.Errorf("DispatchDiagnostic ran for a Validate rejection (%q)", adapter.gotDispatchCmd)
+		}
+		if adapter.gotHandlerInv.Command != "reconcile" {
+			t.Errorf("HandlerDiagnostic command = %q, want reconcile", adapter.gotHandlerInv.Command)
+		}
+		// The hook sees the error the adapter raised, not the
+		// usage-classified copy: identity, not just message equality.
+		if adapter.gotHandlerErr != validateErr {
+			t.Errorf("HandlerDiagnostic err = %v, want the raised error itself", adapter.gotHandlerErr)
+		}
+		// The stdout envelope keeps the usage classification.
+		var envelope map[string]any
+		if err := json.Unmarshal([]byte(stdout), &envelope); err != nil {
+			t.Fatalf("stdout is not one JSON value: %v (%q)", err, stdout)
+		}
+		if envelope["error"].(map[string]any)["code"] != "usage" {
+			t.Errorf("envelope error = %v, want usage code", envelope["error"])
+		}
+	})
+
+	t.Run("handler failures keep HandlerDiagnostics", func(t *testing.T) {
+		adapter := &diagAdapter{testAdapter: &testAdapter{}, dispatchLine: "dispatch", handlerLine: "handler line"}
+		code, _, stderr := runApp(t, testApp(), adapter, "wait", "--consumer", "fail", "u")
+		if code != 1 {
+			t.Fatalf("exit code = %d, want 1 (stderr: %s)", code, stderr)
+		}
+		if stderr != "handler line\n" {
+			t.Errorf("stderr = %q, want the handler diagnostic", stderr)
+		}
+		if adapter.gotDispatchCmd != "" {
+			t.Errorf("DispatchDiagnostic ran for a dispatched command (%q)", adapter.gotDispatchCmd)
+		}
+		// Pin the arguments the handler extension actually receives.
+		if adapter.gotHandlerInv.Command != "wait" {
+			t.Errorf("HandlerDiagnostic command = %q, want wait", adapter.gotHandlerInv.Command)
+		}
+		if adapter.gotHandlerErr == nil || adapter.gotHandlerErr.Error() != "boom" {
+			t.Errorf("HandlerDiagnostic err = %v, want the handler's boom error", adapter.gotHandlerErr)
+		}
+	})
+}
+
 func TestRunEnvelopePaths(t *testing.T) {
 	t.Run("success writes the handler result", func(t *testing.T) {
 		adapter := &testAdapter{}
