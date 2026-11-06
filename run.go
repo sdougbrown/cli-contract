@@ -12,8 +12,8 @@ import (
 )
 
 // Run executes one CLI invocation: it builds the tree from the declarations,
-// parses argv, runs the handler through the adapter, writes exactly one
-// result to stdout, and returns the process exit code. Diagnostics go to
+// parses argv, runs the handler through the adapter, and returns the exit code.
+// Result handlers write one result; stream and raw handlers own stdout. Diagnostics go to
 // stderr. Invalid declarations panic at startup: a command without help
 // text would otherwise render blank instead of failing here.
 func Run(app *App, adapter Adapter, argv []string, stdout, stderr io.Writer) int {
@@ -65,13 +65,20 @@ func Run(app *App, adapter Adapter, argv []string, stdout, stderr io.Writer) int
 	}
 	result := exec.result
 
-	// A terminating signal exits with its shell code and no stdout output.
-	if !app.HandlerOwnedSignals {
-		select {
-		case sig := <-sigCh:
-			return SignalExitCode(sig)
-		default:
+	// A terminating signal exits with its shell code; output already written
+	// stays in place.
+	if code, ok := app.pendingSignal(sigCh); ok {
+		return code
+	}
+	if exec.streamRan {
+		if exec.handlerErr != nil {
+			writeDiagnostic(adapter, stderr, exec.inv, exec.handlerErr)
 		}
+		if exec.streamWriteErr != nil {
+			return ExitOperational
+		}
+		app.injectPendingSignal(adapter, sigCh)
+		return app.exitAfterOutput(exec, sigCh, stderr)
 	}
 
 	// Test-only crash point: after the result is computed, before the
@@ -79,16 +86,7 @@ func Run(app *App, adapter Adapter, argv []string, stdout, stderr io.Writer) int
 	if seams, ok := adapter.(TestSeams); ok {
 		seams.BeforeWrite()
 	}
-	if !app.HandlerOwnedSignals {
-		if seams, ok := adapter.(TestSeams); ok {
-			if sig, ok := seams.PendingSignal(); ok {
-				select {
-				case sigCh <- sig:
-				default:
-				}
-			}
-		}
-	}
+	app.injectPendingSignal(adapter, sigCh)
 
 	// The result is the machine-readable record; this line keeps the
 	// stderr diagnostic promise for handler failures.
@@ -100,19 +98,57 @@ func Run(app *App, adapter Adapter, argv []string, stdout, stderr io.Writer) int
 		fmt.Fprintln(stderr, err.Error())
 		return ExitOperational
 	}
-	if after, ok := adapter.(AfterWrite); ok {
-		after.AfterWrite(exec.inv, result, stderr)
+	return app.exitAfterOutput(exec, sigCh, stderr)
+}
+
+// exitAfterOutput runs the phase both output modes share once their output is
+// written: the adapter's summary hook, a signal that arrived during the
+// output, and the adapter's exit classification. Raw commands write their own
+// output and never reach it.
+func (app *App) exitAfterOutput(exec *execution, sigCh chan os.Signal, stderr io.Writer) int {
+	if after, ok := exec.adapter.(AfterWrite); ok {
+		after.AfterWrite(exec.inv, exec.result, stderr)
 	}
-	// A signal that arrived during the write still wins on exit code, even
-	// though the envelope may already be written.
-	if !app.HandlerOwnedSignals {
-		select {
-		case sig := <-sigCh:
-			return SignalExitCode(sig)
-		default:
-		}
+	// A signal that arrived during the output still wins on exit code, even
+	// though the output may already be written.
+	if code, ok := app.pendingSignal(sigCh); ok {
+		return code
 	}
-	return adapter.ExitCode(exec.inv, result, exec.handlerErr)
+	return exec.adapter.ExitCode(exec.inv, exec.result, exec.handlerErr)
+}
+
+// injectPendingSignal feeds a test-only signal into the exit-code check, the
+// way one that arrived while the output was written would.
+func (app *App) injectPendingSignal(adapter Adapter, sigCh chan os.Signal) {
+	if app.HandlerOwnedSignals {
+		return
+	}
+	seams, ok := adapter.(TestSeams)
+	if !ok {
+		return
+	}
+	sig, ok := seams.PendingSignal()
+	if !ok {
+		return
+	}
+	select {
+	case sigCh <- sig:
+	default:
+	}
+}
+
+// pendingSignal reports the shell exit code for a terminating signal the
+// library watched for, and whether one had arrived.
+func (app *App) pendingSignal(sigCh chan os.Signal) (int, bool) {
+	if app.HandlerOwnedSignals {
+		return 0, false
+	}
+	select {
+	case sig := <-sigCh:
+		return SignalExitCode(sig), true
+	default:
+		return 0, false
+	}
 }
 
 // writeDiagnosticLine writes one stderr diagnostic line; an empty line

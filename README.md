@@ -133,14 +133,48 @@ type Adapter interface {
     ExitCode(inv Invocation, result any, handlerErr error) int
     Deadline(ctx context.Context, inv Invocation) (context.Context, context.CancelFunc)
     BeforeHandler(inv Invocation, stderr io.Writer)
+    Validate(inv Invocation) error
 }
 ```
+
+### Streaming output
+
+Use `Command.Stream` for output produced during an invocation. A stream
+handler receives stdout and stderr and returns an app-defined result and error:
+
+```go
+Stream: func(ctx context.Context, inv clicontract.Invocation, stdout, stderr io.Writer) (any, error) {
+    // Write records to stdout while honoring ctx cancellation.
+    return result, err
+},
+```
+
+The result is passed to `Adapter.ExitCode`, not written to stdout. On an error,
+the adapter's `ErrorResult` supplies the result for exit classification and
+`HandlerDiagnostics` controls the stderr diagnostic. The stream owns its
+framing, including any terminal error record. An output write failure exits
+with the operational code, even if the handler ignores the error; when the
+handler also returns an error, that error supplies the result and diagnostic
+and the write failure decides only the exit code. Partial output cannot be
+retracted.
+
+Streams use the same validation, `BeforeHandler`, deadline, `AfterWrite`, and
+signal handling as `Handle`; as there, a failed output write skips
+`AfterWrite`. Before the stream starts, parsing and validation errors use the
+ordinary adapter-written usage response. Once it starts, the library never
+appends an envelope. A signal can leave previously written output in place;
+handlers must return when their context is canceled. The adapter decides how
+to classify deadline and cancellation errors.
+
+`Handle`, `Raw`, and `Stream` are exclusive on a leaf command. Schema and
+registry output-mode declarations do not yet describe streams; see #2.
 
 Optional extensions:
 
 - `TestSeams` — test-only crash (`BeforeWrite`) and signal injection
   (`PendingSignal`) points; production adapters skip it.
-- `AfterWrite` — monitor-facing stderr summaries after the result is written.
+- `AfterWrite` — monitor-facing stderr summaries after a result or stream
+  writes its output; a failed write skips it, and a raw command never calls it.
 - `HandlerDiagnostics` — format or silence the stderr diagnostic for
   handler-owned failures: a dispatched command's error, a Validate
   rejection, or a raw-output command's failure (`HandlerDiagnostic(inv,
