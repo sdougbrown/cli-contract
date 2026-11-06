@@ -65,13 +65,10 @@ func Run(app *App, adapter Adapter, argv []string, stdout, stderr io.Writer) int
 	}
 	result := exec.result
 
-	// A terminating signal exits with its shell code and no stdout output.
-	if !app.HandlerOwnedSignals {
-		select {
-		case sig := <-sigCh:
-			return SignalExitCode(sig)
-		default:
-		}
+	// A terminating signal exits with its shell code; output already written
+	// stays in place.
+	if code, ok := app.pendingSignal(sigCh); ok {
+		return code
 	}
 	if exec.streamRan {
 		if exec.handlerErr != nil {
@@ -80,7 +77,7 @@ func Run(app *App, adapter Adapter, argv []string, stdout, stderr io.Writer) int
 		if exec.streamWriteErr != nil {
 			return ExitOperational
 		}
-		return adapter.ExitCode(exec.inv, result, exec.handlerErr)
+		return app.exitAfterOutput(exec, sigCh, stderr)
 	}
 
 	// Test-only crash point: after the result is computed, before the
@@ -109,19 +106,47 @@ func Run(app *App, adapter Adapter, argv []string, stdout, stderr io.Writer) int
 		fmt.Fprintln(stderr, err.Error())
 		return ExitOperational
 	}
-	if after, ok := adapter.(AfterWrite); ok {
-		after.AfterWrite(exec.inv, result, stderr)
+	return app.exitAfterOutput(exec, sigCh, stderr)
+}
+
+// exitAfterOutput runs the phase both output modes share once their output is
+// written: the adapter's summary hook, a test-injected signal, a signal that
+// arrived during the output, and the adapter's exit classification. Raw
+// commands write their own output and never reach it.
+func (app *App) exitAfterOutput(exec *execution, sigCh chan os.Signal, stderr io.Writer) int {
+	if after, ok := exec.adapter.(AfterWrite); ok {
+		after.AfterWrite(exec.inv, exec.result, stderr)
 	}
-	// A signal that arrived during the write still wins on exit code, even
-	// though the envelope may already be written.
 	if !app.HandlerOwnedSignals {
-		select {
-		case sig := <-sigCh:
-			return SignalExitCode(sig)
-		default:
+		if seams, ok := exec.adapter.(TestSeams); ok {
+			if sig, ok := seams.PendingSignal(); ok {
+				select {
+				case sigCh <- sig:
+				default:
+				}
+			}
+		}
+		// A signal that arrived during the output still wins on exit code,
+		// even though the output may already be written.
+		if code, ok := app.pendingSignal(sigCh); ok {
+			return code
 		}
 	}
-	return adapter.ExitCode(exec.inv, result, exec.handlerErr)
+	return exec.adapter.ExitCode(exec.inv, exec.result, exec.handlerErr)
+}
+
+// pendingSignal reports the shell exit code for a terminating signal the
+// library watched for, and whether one had arrived.
+func (app *App) pendingSignal(sigCh chan os.Signal) (int, bool) {
+	if app.HandlerOwnedSignals {
+		return 0, false
+	}
+	select {
+	case sig := <-sigCh:
+		return SignalExitCode(sig), true
+	default:
+		return 0, false
+	}
 }
 
 // writeDiagnosticLine writes one stderr diagnostic line; an empty line

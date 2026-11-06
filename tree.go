@@ -68,19 +68,21 @@ type Adapter interface {
 }
 
 // TestSeams is an optional Adapter extension for test-only crash and signal
-// injection. Production adapters do not implement it.
+// injection. Production adapters do not implement it. A stream command has no
+// envelope write, so only PendingSignal runs for it.
 type TestSeams interface {
 	// BeforeWrite is the crash point after the result is computed and
 	// before the envelope is written.
 	BeforeWrite()
-	// PendingSignal returns a signal to inject before the envelope write,
-	// exercising the post-write signal re-check.
+	// PendingSignal returns a signal to inject before the exit code is
+	// derived, exercising the post-output signal re-check.
 	PendingSignal() (os.Signal, bool)
 }
 
-// AfterWrite is an optional Adapter extension that runs after the envelope
-// is written and before the exit code is derived: monitor-facing summaries
-// on stderr go here.
+// AfterWrite is an optional Adapter extension that runs after a result or
+// stream command's output is written and before the exit code is derived:
+// monitor-facing summaries on stderr go here. A failed output write skips it,
+// and a raw command never calls it.
 type AfterWrite interface {
 	AfterWrite(inv Invocation, result any, stderr io.Writer)
 }
@@ -352,7 +354,13 @@ func (exec *execution) invocation(ctx context.Context, c *Command, inv Invocatio
 		result, err = c.Stream(ctx, inv, out, stderr)
 		if out.err != nil {
 			exec.streamWriteErr = out.err
-			err = out.err
+			// A handler that ignored its write failure still gets that
+			// failure diagnosed. One that returned its own error keeps it:
+			// the handler's error owns the diagnostic, and the write failure
+			// owns the exit code.
+			if err == nil {
+				err = out.err
+			}
 		}
 	} else {
 		result, err = c.Handle(ctx, inv, stderr)

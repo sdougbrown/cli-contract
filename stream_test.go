@@ -74,7 +74,7 @@ func TestStreamWriteFailure(t *testing.T) {
 		return map[string]any{"status": "ok"}, nil
 	}}}}
 	var errOut bytes.Buffer
-	if code := Run(app, &testAdapter{}, []string{"watch"}, brokenStreamWriter{}, &errOut); code == 0 || !strings.Contains(errOut.String(), "write failed") {
+	if code := Run(app, &testAdapter{}, []string{"watch"}, brokenStreamWriter{}, &errOut); code != ExitOperational || !strings.Contains(errOut.String(), "write failed") {
 		t.Fatalf("code=%d stderr=%q", code, errOut.String())
 	}
 }
@@ -155,6 +155,56 @@ func TestStreamPartialOutputFailure(t *testing.T) {
 	code := Run(app, &testAdapter{}, []string{"watch"}, &out, &errOut)
 	if code != 1 || out.buf.String() != "first\n" || !strings.Contains(errOut.String(), "write failed") {
 		t.Fatalf("code=%d stdout=%q stderr=%q", code, out.buf.String(), errOut.String())
+	}
+}
+
+type afterWriteStreamAdapter struct{ testAdapter }
+
+func (a *afterWriteStreamAdapter) AfterWrite(Invocation, any, io.Writer) {
+	a.after = append(a.after, "summary")
+}
+
+func TestStreamAfterWrite(t *testing.T) {
+	app := &App{Name: "test", Commands: []*Command{{Name: "watch", Short: "watch", Stream: func(_ context.Context, _ Invocation, out, _ io.Writer) (any, error) {
+		io.WriteString(out, "batch\n")
+		return map[string]any{"status": "ok"}, nil
+	}}}}
+	a := &afterWriteStreamAdapter{}
+	if code := Run(app, a, []string{"watch"}, &bytes.Buffer{}, &bytes.Buffer{}); code != 0 || len(a.after) != 1 {
+		t.Fatalf("code=%d after=%v, want the summary after the stream output", code, a.after)
+	}
+	a = &afterWriteStreamAdapter{}
+	var errOut bytes.Buffer
+	if code := Run(app, a, []string{"watch"}, brokenStreamWriter{}, &errOut); code != ExitOperational || len(a.after) != 0 {
+		t.Fatalf("code=%d after=%v stderr=%q, want the write failure to skip the summary", code, a.after, errOut.String())
+	}
+}
+
+func TestStreamWriteFailureKeepsHandlerError(t *testing.T) {
+	handlerErr := errors.New("handler stopped")
+	app := &App{Name: "test", Commands: []*Command{{Name: "watch", Short: "watch", Stream: func(_ context.Context, _ Invocation, out, _ io.Writer) (any, error) {
+		_, _ = io.WriteString(out, "batch\n")
+		return nil, handlerErr
+	}}}}
+	var errOut bytes.Buffer
+	code := Run(app, &testAdapter{}, []string{"watch"}, brokenStreamWriter{}, &errOut)
+	if code != ExitOperational {
+		t.Fatalf("code=%d, want ExitOperational: the write failure owns the exit code", code)
+	}
+	if !strings.Contains(errOut.String(), handlerErr.Error()) || strings.Contains(errOut.String(), "write failed") {
+		t.Fatalf("stderr=%q, want the handler's error as the diagnostic", errOut.String())
+	}
+}
+
+func TestStreamSignalAfterOutput(t *testing.T) {
+	app := &App{Name: "test", Commands: []*Command{{Name: "watch", Short: "watch", Stream: func(_ context.Context, _ Invocation, out, _ io.Writer) (any, error) {
+		io.WriteString(out, "ready\n")
+		return map[string]any{"status": "ok"}, nil
+	}}}}
+	a := &testAdapter{seams: &testSeams{signal: syscall.SIGINT}}
+	var out, errOut bytes.Buffer
+	if code := Run(app, a, []string{"watch"}, &out, &errOut); code != 130 || out.String() != "ready\n" {
+		t.Fatalf("code=%d stdout=%q stderr=%q, want the signal to win with the output kept", code, out.String(), errOut.String())
 	}
 }
 
