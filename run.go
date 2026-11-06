@@ -53,7 +53,7 @@ func Run(app *App, adapter Adapter, argv []string, stdout, stderr io.Writer) int
 		} else {
 			// Dispatch-level errors are self-prefixed: the messages are
 			// built under the app's error prefix at the validation sites.
-			writeDispatchDiagnostic(adapter, stderr, exec.diagCommand(command), err)
+			writeDispatchDiagnostic(adapter, stderr, exec.diagCommand(), err)
 		}
 		return adapter.ExitCode(Invocation{Command: command}, nil, err)
 	}
@@ -115,6 +115,14 @@ func Run(app *App, adapter Adapter, argv []string, stdout, stderr io.Writer) int
 	return adapter.ExitCode(exec.inv, result, exec.handlerErr)
 }
 
+// writeDiagnosticLine writes one stderr diagnostic line; an empty line
+// prints nothing. Both diagnostic hooks share this one write path.
+func writeDiagnosticLine(stderr io.Writer, line string) {
+	if line != "" {
+		fmt.Fprintln(stderr, line)
+	}
+}
+
 // writeDispatchDiagnostic writes one dispatch-failure diagnostic to stderr.
 // The default is the error's message; the DispatchDiagnostics extension
 // formats it (or silences it with an empty string).
@@ -123,9 +131,7 @@ func writeDispatchDiagnostic(adapter Adapter, stderr io.Writer, command string, 
 	if dd, ok := adapter.(DispatchDiagnostics); ok {
 		line = dd.DispatchDiagnostic(command, err)
 	}
-	if line != "" {
-		fmt.Fprintln(stderr, line)
-	}
+	writeDiagnosticLine(stderr, line)
 }
 
 // writeDiagnostic writes one handler-failure diagnostic to stderr. The
@@ -136,9 +142,7 @@ func writeDiagnostic(adapter Adapter, stderr io.Writer, inv Invocation, err erro
 	if hd, ok := adapter.(HandlerDiagnostics); ok {
 		line = hd.HandlerDiagnostic(inv, err)
 	}
-	if line != "" {
-		fmt.Fprintln(stderr, line)
-	}
+	writeDiagnosticLine(stderr, line)
 }
 
 // execute builds the tree and runs the parse-and-dispatch passes over argv,
@@ -224,13 +228,10 @@ type DispatchDiagnostics interface {
 	DispatchDiagnostic(command string, err error) string
 }
 
-// diagCommand resolves the command name the dispatch-diagnostic extensions
-// see: the path of the command cobra resolved for the reported error, or
-// the argv-derived name when no tree ran to resolve one.
-func (exec *execution) diagCommand(fallback string) string {
-	if exec.failCmd == nil {
-		return fallback
-	}
+// diagCommand names the command for the dispatch-diagnostic extensions:
+// the path of the command cobra resolved on the first failing pass, the
+// same path the diagnostic message is prefixed with.
+func (exec *execution) diagCommand() string {
 	return exec.app.pathOf(exec.failCmd)
 }
 
