@@ -6,6 +6,7 @@ import (
 	"io"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 
 	"github.com/spf13/cobra"
@@ -45,7 +46,7 @@ func Run(app *App, adapter Adapter, argv []string, stdout, stderr io.Writer) int
 		adapter.Write(stdout, adapter.ErrorResult(command, err))
 		// Dispatch-level errors are self-prefixed: the messages are built
 		// under the app's error prefix at the validation sites.
-		writeDispatchDiagnostic(adapter, stderr, command, err)
+		writeDispatchDiagnostic(adapter, stderr, exec.diagCommand(command, app.Name), err)
 		return adapter.ExitCode(Invocation{Command: command}, nil, err)
 	}
 	// Help paths (bare --help, the help command, <command> --help) print
@@ -154,7 +155,10 @@ func (a *App) execute(exec *execution, runHandlers bool, argv []string, stdout, 
 		// resolved is what the next rewrite is scoped to.
 		exec.flagErr, exec.flagErrCmd = nil, nil
 		root := readyTree(a, exec, runHandlers, argv, stdout, stderr)
-		err := root.ExecuteContext(ctx)
+		// ExecuteContext is ExecuteContextC with the command discarded; the
+		// command is what the dispatch-diagnostic extensions need.
+		cmd, err := root.ExecuteContextC(ctx)
+		exec.failCmd = cmd
 		if err == nil {
 			return nil
 		}
@@ -198,10 +202,27 @@ type HandlerDiagnostics interface {
 // prints nothing. HandlerDiagnostics is the corresponding extension for
 // handler failures.
 //
-// It receives the command name rather than an Invocation: dispatch-level
-// failures happen before any command dispatched, so no Invocation exists.
+// The command argument is the path the failure resolved to: names below
+// the root joined with spaces ("store reset"), or the app name when the
+// failure resolved to the root. It is the same path the diagnostic
+// message is prefixed with. It is a path rather than an Invocation
+// because no Invocation exists before dispatch.
 type DispatchDiagnostics interface {
 	DispatchDiagnostic(command string, err error) string
+}
+
+// diagCommand resolves the command name the dispatch-diagnostic extensions
+// see: the path of the command cobra resolved for the failure, or the
+// argv-derived name when the failure left no resolved command (Parse with a
+// discarded adapter, or a pass that never ran a tree).
+func (exec *execution) diagCommand(fallback, appName string) string {
+	if exec.failCmd == nil {
+		return fallback
+	}
+	if names := commandPath(exec.failCmd); len(names) > 0 {
+		return strings.Join(names, " ")
+	}
+	return appName
 }
 
 // Parse parses argv (without the program name) without running anything:

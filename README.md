@@ -147,8 +147,9 @@ Optional extensions:
 - `DispatchDiagnostics` — format or silence the stderr diagnostic for
   dispatch-level failures, unknown command, bad flag, or bad positional
   (`DispatchDiagnostic(command, err) string`; an empty string prints
-  nothing). It takes the command name rather than an Invocation, since no
-  Invocation exists before dispatch.
+  nothing). It takes the command path the failure resolved to ("store
+  reset"; the app name when nothing resolved) rather than an Invocation,
+  since no Invocation exists before dispatch.
 
 ## Schema
 

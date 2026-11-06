@@ -316,6 +316,45 @@ func TestRunDispatchDiagnostics(t *testing.T) {
 		}
 	})
 
+	t.Run("nested failure gets the full path", func(t *testing.T) {
+		adapter := &diagAdapter{testAdapter: &testAdapter{}, dispatchLine: "hint"}
+		code, _, stderr := runApp(t, testApp(), adapter, "store", "reset", "--bogus")
+		if code != 2 {
+			t.Fatalf("exit code = %d, want 2 (stderr: %s)", code, stderr)
+		}
+		if adapter.gotDispatchCmd != "store reset" {
+			t.Errorf("command = %q, want the resolved path store reset", adapter.gotDispatchCmd)
+		}
+		if stderr != "hint\n" {
+			t.Errorf("stderr = %q, want the extension's line", stderr)
+		}
+	})
+
+	t.Run("unresolved command gets the app name", func(t *testing.T) {
+		adapter := &diagAdapter{testAdapter: &testAdapter{}, dispatchLine: "hint"}
+		code, _, stderr := runApp(t, testApp(), adapter, "bogus")
+		if code != 2 {
+			t.Fatalf("exit code = %d, want 2 (stderr: %s)", code, stderr)
+		}
+		if adapter.gotDispatchCmd != "testcli" {
+			t.Errorf("command = %q, want the app name testcli", adapter.gotDispatchCmd)
+		}
+		if stderr != "hint\n" {
+			t.Errorf("stderr = %q, want the extension's line", stderr)
+		}
+	})
+
+	t.Run("missing subcommand gets the app name", func(t *testing.T) {
+		adapter := &diagAdapter{testAdapter: &testAdapter{}, dispatchLine: "hint"}
+		code, _, stderr := runApp(t, testApp(), adapter)
+		if code != 2 {
+			t.Fatalf("exit code = %d, want 2 (stderr: %s)", code, stderr)
+		}
+		if adapter.gotDispatchCmd != "testcli" {
+			t.Errorf("command = %q, want the app name testcli", adapter.gotDispatchCmd)
+		}
+	})
+
 	t.Run("single-dash retry reports the first pass's error", func(t *testing.T) {
 		adapter := &diagAdapter{testAdapter: &testAdapter{}, dispatchLine: "hint"}
 		// Two passes: -head rewrites to --head, the retry then fails on the
