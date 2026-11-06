@@ -388,6 +388,13 @@ func TestRunDispatchDiagnostics(t *testing.T) {
 		if adapter.gotDispatchCmd != "" {
 			t.Errorf("DispatchDiagnostic ran for a dispatched command (%q)", adapter.gotDispatchCmd)
 		}
+		// Pin the arguments the handler extension actually receives.
+		if adapter.gotHandlerInv.Command != "wait" {
+			t.Errorf("HandlerDiagnostic command = %q, want wait", adapter.gotHandlerInv.Command)
+		}
+		if adapter.gotHandlerErr == nil || adapter.gotHandlerErr.Error() != "boom" {
+			t.Errorf("HandlerDiagnostic err = %v, want the handler's boom error", adapter.gotHandlerErr)
+		}
 	})
 }
 
