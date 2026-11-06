@@ -106,9 +106,10 @@ type execution struct {
 	// flag produces.
 	flagErr    error
 	flagErrCmd *cobra.Command
-	// failCmd is the command cobra resolved on the last executed pass:
-	// the command that ran, or the deepest command the parse reached.
-	// Read by the dispatch-diagnostic path to name the failing command.
+	// failCmd is the command cobra resolved on the first failing pass,
+	// kept paired with firstErr: the error Run reports is the first
+	// pass's, so the dispatch-diagnostic path must name that pass's
+	// command. Written at the masked returns in execute.
 	failCmd *cobra.Command
 	// declared maps each cobra command of the last built tree to the
 	// declared Command it was built from: the properties the builder
