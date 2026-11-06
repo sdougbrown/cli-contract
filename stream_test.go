@@ -180,6 +180,18 @@ func TestStreamAfterWrite(t *testing.T) {
 	}
 }
 
+func TestStreamAfterWriteOnHandlerError(t *testing.T) {
+	app := &App{Name: "test", Commands: []*Command{{Name: "watch", Short: "watch", Stream: func(_ context.Context, _ Invocation, out, _ io.Writer) (any, error) {
+		io.WriteString(out, "batch\n")
+		return nil, errors.New("broken")
+	}}}}
+	a := &afterWriteStreamAdapter{}
+	var out, errOut bytes.Buffer
+	if code := Run(app, a, []string{"watch"}, &out, &errOut); code != 1 || len(a.after) != 1 {
+		t.Fatalf("code=%d after=%v stderr=%q, want the summary after a handler error", code, a.after, errOut.String())
+	}
+}
+
 func TestStreamWriteFailureKeepsHandlerError(t *testing.T) {
 	handlerErr := errors.New("handler stopped")
 	app := &App{Name: "test", Commands: []*Command{{Name: "watch", Short: "watch", Stream: func(_ context.Context, _ Invocation, out, _ io.Writer) (any, error) {
@@ -207,6 +219,28 @@ func TestStreamWriteFailureOwnsExitCode(t *testing.T) {
 	}
 }
 
+type shortStreamWriter struct{ wrote bool }
+
+func (w *shortStreamWriter) Write(p []byte) (int, error) {
+	if w.wrote {
+		return len(p), nil
+	}
+	w.wrote = true
+	return len(p) / 2, nil
+}
+
+func TestStreamShortWrite(t *testing.T) {
+	app := &App{Name: "test", Commands: []*Command{{Name: "watch", Short: "watch", Stream: func(_ context.Context, _ Invocation, out, _ io.Writer) (any, error) {
+		_, _ = io.WriteString(out, "batch\n")
+		return map[string]any{"status": "ok"}, nil
+	}}}}
+	var errOut bytes.Buffer
+	code := Run(app, &testAdapter{}, []string{"watch"}, &shortStreamWriter{}, &errOut)
+	if code != ExitOperational || !strings.Contains(errOut.String(), "short write") {
+		t.Fatalf("code=%d stderr=%q, want a short write to be an operational failure", code, errOut.String())
+	}
+}
+
 func TestStreamSignalAfterOutput(t *testing.T) {
 	app := &App{Name: "test", Commands: []*Command{{Name: "watch", Short: "watch", Stream: func(_ context.Context, _ Invocation, out, _ io.Writer) (any, error) {
 		io.WriteString(out, "ready\n")
@@ -216,6 +250,18 @@ func TestStreamSignalAfterOutput(t *testing.T) {
 	var out, errOut bytes.Buffer
 	if code := Run(app, a, []string{"watch"}, &out, &errOut); code != 130 || out.String() != "ready\n" {
 		t.Fatalf("code=%d stdout=%q stderr=%q, want the signal to win with the output kept", code, out.String(), errOut.String())
+	}
+}
+
+func TestStreamSkipsBeforeWrite(t *testing.T) {
+	app := &App{Name: "test", Commands: []*Command{{Name: "watch", Short: "watch", Stream: func(_ context.Context, _ Invocation, out, _ io.Writer) (any, error) {
+		io.WriteString(out, "batch\n")
+		return map[string]any{"status": "ok"}, nil
+	}}}}
+	a := &testAdapter{seams: &testSeams{crash: true}}
+	var out, errOut bytes.Buffer
+	if code := Run(app, a, []string{"watch"}, &out, &errOut); code != 0 || out.String() != "batch\n" {
+		t.Fatalf("code=%d stdout=%q stderr=%q, want the stream to finish without the envelope crash point", code, out.String(), errOut.String())
 	}
 }
 

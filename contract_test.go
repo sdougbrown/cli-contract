@@ -2874,24 +2874,30 @@ func TestDeepNestingValidationPath(t *testing.T) {
 // TestLeafRejectsMultipleHandlers pins that a leaf declaring more than one of
 // Handle, Raw, and Stream fails at startup instead of dispatching one silently.
 func TestLeafRejectsMultipleHandlers(t *testing.T) {
-	app := &App{Name: "t", Version: "v1", Commands: []*Command{{
-		Name:  "watch",
-		Short: "watch one target",
-		Handle: func(context.Context, Invocation, io.Writer) (any, error) {
-			return nil, nil
-		},
-		Stream: func(context.Context, Invocation, io.Writer, io.Writer) (any, error) {
-			return nil, nil
-		},
-	}}}
-	defer func() {
-		r := recover()
-		if r == nil {
-			t.Fatal("validate did not reject a leaf with two handlers")
-		}
-		if !strings.Contains(r.(string), `command "watch" must declare exactly one of Handle, Raw, or Stream`) {
-			t.Errorf("panic = %v, want the multi-handler diagnostic", r)
-		}
-	}()
-	Run(app, &testAdapter{}, []string{"watch"}, &bytes.Buffer{}, &bytes.Buffer{})
+	handle := func(context.Context, Invocation, io.Writer) (any, error) { return nil, nil }
+	raw := func(context.Context, Invocation, io.Writer) error { return nil }
+	stream := func(context.Context, Invocation, io.Writer, io.Writer) (any, error) { return nil, nil }
+	for _, tc := range []struct {
+		name string
+		cmd  *Command
+	}{
+		{"Handle and Stream", &Command{Name: "watch", Short: "watch one target", Handle: handle, Stream: stream}},
+		{"Handle and Raw", &Command{Name: "watch", Short: "watch one target", Handle: handle, Raw: raw}},
+		{"Raw and Stream", &Command{Name: "watch", Short: "watch one target", Raw: raw, Stream: stream}},
+		{"all three", &Command{Name: "watch", Short: "watch one target", Handle: handle, Raw: raw, Stream: stream}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			app := &App{Name: "t", Version: "v1", Commands: []*Command{tc.cmd}}
+			defer func() {
+				r := recover()
+				if r == nil {
+					t.Fatal("validate did not reject a leaf with two handlers")
+				}
+				if !strings.Contains(r.(string), `command "watch" must declare exactly one of Handle, Raw, or Stream`) {
+					t.Errorf("panic = %v, want the multi-handler diagnostic", r)
+				}
+			}()
+			Run(app, &testAdapter{}, []string{"watch"}, &bytes.Buffer{}, &bytes.Buffer{})
+		})
+	}
 }
