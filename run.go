@@ -12,8 +12,8 @@ import (
 )
 
 // Run executes one CLI invocation: it builds the tree from the declarations,
-// parses argv, runs the handler through the adapter, writes exactly one
-// result to stdout, and returns the process exit code. Diagnostics go to
+// parses argv, runs the handler through the adapter, and returns the exit code.
+// Result handlers write one result; stream and raw handlers own stdout. Diagnostics go to
 // stderr. Invalid declarations panic at startup: a command without help
 // text would otherwise render blank instead of failing here.
 func Run(app *App, adapter Adapter, argv []string, stdout, stderr io.Writer) int {
@@ -72,6 +72,15 @@ func Run(app *App, adapter Adapter, argv []string, stdout, stderr io.Writer) int
 			return SignalExitCode(sig)
 		default:
 		}
+	}
+	if exec.streamRan {
+		if exec.handlerErr != nil {
+			writeDiagnostic(adapter, stderr, exec.inv, exec.handlerErr)
+		}
+		if exec.streamWriteErr != nil {
+			return ExitOperational
+		}
+		return adapter.ExitCode(exec.inv, result, exec.handlerErr)
 	}
 
 	// Test-only crash point: after the result is computed, before the

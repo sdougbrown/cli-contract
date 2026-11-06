@@ -2864,7 +2864,7 @@ func TestDeepNestingValidationPath(t *testing.T) {
 		if r == nil {
 			t.Fatal("validate did not reject a depth-3 leaf without a handler")
 		}
-		if !strings.Contains(r.(string), `command "wf ctl enable" must declare exactly one of Handle or Raw`) {
+		if !strings.Contains(r.(string), `command "wf ctl enable" must declare exactly one of Handle, Raw, or Stream`) {
 			t.Errorf("panic = %v, want the full command path in the diagnostic", r)
 		}
 	}()

@@ -104,6 +104,10 @@ type Invocation struct {
 // the diagnostics writer for handler progress.
 type HandleFunc func(ctx context.Context, inv Invocation, stderr io.Writer) (any, error)
 
+// StreamFunc writes its output incrementally and returns an adapter-defined
+// result and error for exit classification. The adapter does not write the result.
+type StreamFunc func(ctx context.Context, inv Invocation, stdout, stderr io.Writer) (any, error)
+
 // RawFunc writes directly to stdout instead of returning a result: the
 // command's output is not an envelope (help text, a schema document). A raw
 // command exits 0 with nothing else written; an error returns through the
@@ -141,10 +145,11 @@ type Command struct {
 	// Field and Targets name flag names.
 	InputRules []*Rule
 	// Handle runs the command and returns the result the adapter writes.
-	// Mutually exclusive with Raw.
 	Handle HandleFunc
-	// Raw writes directly to stdout. Mutually exclusive with Handle.
+	// Raw writes directly to stdout.
 	Raw RawFunc
+	// Stream writes incrementally; Handle, Raw, and Stream are mutually exclusive.
+	Stream StreamFunc
 }
 
 // UsageError marks a caller error: the adapter typically routes it to the
@@ -167,7 +172,8 @@ type App struct {
 	// HandlerOwnedSignals stops the library from watching SIGINT/SIGTERM:
 	// handlers that run servers or manage their own shutdown install
 	// their own handlers and choose the exit code. The default (false)
-	// exits with the signal's shell code (130/143) and suppresses stdout.
+	// exits with the signal's shell code (130/143). Stream output already
+	// written remains on stdout.
 	HandlerOwnedSignals bool
 	// VersionTemplate renders the --version output; the default is
 	// "<name> {{.Version}}\n".
@@ -191,7 +197,7 @@ func UsageErrorf(format string, args ...any) *UsageError {
 
 // validate checks one declared App: every command and subcommand has a
 // short, the flag lists the tree builder registers are well-formed and free
-// of repeats, and Handle/Raw are exclusive. Called by buildTree so drift
+// of repeats, and handlers are exclusive. Called by buildTree so drift
 // fails at startup on every entry point.
 func validate(app *App) error {
 	checks, err := validateAvailability(app)
@@ -241,10 +247,20 @@ func validateCommand(path string, c *Command, inherited []surfaceFlag, common []
 	if c.Short == "" {
 		return UsageErrorf("command %q has no help short", path)
 	}
-	if len(c.Subcommands) == 0 && (c.Handle == nil) == (c.Raw == nil) {
+	count := 0
+	if c.Handle != nil {
+		count++
+	}
+	if c.Raw != nil {
+		count++
+	}
+	if c.Stream != nil {
+		count++
+	}
+	if len(c.Subcommands) == 0 && count != 1 {
 		// Only leaf commands run: a parent with subcommands fails with a
 		// caller error when invoked bare.
-		return UsageErrorf("command %q must declare exactly one of Handle or Raw", path)
+		return UsageErrorf("command %q must declare exactly one of Handle, Raw, or Stream", path)
 	}
 	if rules := checks.rulesByCmd[c]; len(rules) > 0 {
 		if err := validateAvailabilityRules(path, rules, checks); err != nil {

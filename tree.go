@@ -89,12 +89,14 @@ type AfterWrite interface {
 // serves dispatch (handlers run) and parse-only (Parse captures without
 // executing).
 type execution struct {
-	app        *App
-	adapter    Adapter
-	inv        Invocation
-	result     any
-	handlerErr error
-	ran        bool
+	app            *App
+	adapter        Adapter
+	inv            Invocation
+	result         any
+	handlerErr     error
+	ran            bool
+	streamRan      bool
+	streamWriteErr error
 	// rawRan marks a dispatched raw-output command: it wrote its own
 	// output, so Run exits 0 without a result, but Parse still yields
 	// its invocation.
@@ -308,7 +310,7 @@ func dispatchRunE(exec *execution, runHandlers bool, c *Command, ancestors []*Co
 			return verr
 		}
 		exec.adapter.BeforeHandler(inv, cmd.ErrOrStderr())
-		exec.invocation(cmd.Context(), c, inv, cmd.ErrOrStderr())
+		exec.invocation(cmd.Context(), c, inv, cmd.OutOrStdout(), cmd.ErrOrStderr())
 		return nil
 	}
 }
@@ -338,17 +340,45 @@ func rawRunE(exec *execution, runHandlers bool, c *Command, ancestors []*Command
 
 // invocation runs one command's handler with the decorated context and
 // normalizes handler failures through the adapter's error result.
-func (exec *execution) invocation(ctx context.Context, c *Command, inv Invocation, stderr io.Writer) {
+func (exec *execution) invocation(ctx context.Context, c *Command, inv Invocation, stdout, stderr io.Writer) {
 	var cancel context.CancelFunc
 	ctx, cancel = exec.adapter.Deadline(ctx, inv)
 	defer cancel()
-	result, err := c.Handle(ctx, inv, stderr)
+	var result any
+	var err error
+	if c.Stream != nil {
+		exec.streamRan = true
+		out := &streamWriter{Writer: stdout}
+		result, err = c.Stream(ctx, inv, out, stderr)
+		if out.err != nil {
+			exec.streamWriteErr = out.err
+			err = out.err
+		}
+	} else {
+		result, err = c.Handle(ctx, inv, stderr)
+	}
 	if err != nil {
 		exec.result = exec.adapter.ErrorResult(inv.Command, err)
 		exec.handlerErr = err
 		return
 	}
 	exec.result, exec.handlerErr = result, nil
+}
+
+type streamWriter struct {
+	io.Writer
+	err error
+}
+
+func (w *streamWriter) Write(p []byte) (int, error) {
+	n, err := w.Writer.Write(p)
+	if err == nil && n != len(p) {
+		err = io.ErrShortWrite
+	}
+	if w.err == nil && err != nil {
+		w.err = err
+	}
+	return n, err
 }
 
 // buildTree builds the cobra command tree from the declared commands. The
