@@ -2870,3 +2870,28 @@ func TestDeepNestingValidationPath(t *testing.T) {
 	}()
 	Run(app, &testAdapter{}, []string{"wf", "ctl", "enable"}, &bytes.Buffer{}, &bytes.Buffer{})
 }
+
+// TestLeafRejectsMultipleHandlers pins that a leaf declaring more than one of
+// Handle, Raw, and Stream fails at startup instead of dispatching one silently.
+func TestLeafRejectsMultipleHandlers(t *testing.T) {
+	app := &App{Name: "t", Version: "v1", Commands: []*Command{{
+		Name:  "watch",
+		Short: "watch one target",
+		Handle: func(context.Context, Invocation, io.Writer) (any, error) {
+			return nil, nil
+		},
+		Stream: func(context.Context, Invocation, io.Writer, io.Writer) (any, error) {
+			return nil, nil
+		},
+	}}}
+	defer func() {
+		r := recover()
+		if r == nil {
+			t.Fatal("validate did not reject a leaf with two handlers")
+		}
+		if !strings.Contains(r.(string), `command "watch" must declare exactly one of Handle, Raw, or Stream`) {
+			t.Errorf("panic = %v, want the multi-handler diagnostic", r)
+		}
+	}()
+	Run(app, &testAdapter{}, []string{"watch"}, &bytes.Buffer{}, &bytes.Buffer{})
+}
