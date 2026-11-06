@@ -196,6 +196,17 @@ func TestStreamWriteFailureKeepsHandlerError(t *testing.T) {
 	}
 }
 
+func TestStreamWriteFailureOwnsExitCode(t *testing.T) {
+	app := &App{Name: "test", Commands: []*Command{{Name: "watch", Short: "watch", Stream: func(_ context.Context, _ Invocation, out, _ io.Writer) (any, error) {
+		_, _ = io.WriteString(out, "batch\n")
+		return nil, UsageErrorf("bad input")
+	}}}}
+	var errOut bytes.Buffer
+	if code := Run(app, &testAdapter{}, []string{"watch"}, brokenStreamWriter{}, &errOut); code != ExitOperational {
+		t.Fatalf("code=%d stderr=%q, want ExitOperational: the write failure outranks the usage classification", code, errOut.String())
+	}
+}
+
 func TestStreamSignalAfterOutput(t *testing.T) {
 	app := &App{Name: "test", Commands: []*Command{{Name: "watch", Short: "watch", Stream: func(_ context.Context, _ Invocation, out, _ io.Writer) (any, error) {
 		io.WriteString(out, "ready\n")

@@ -77,6 +77,7 @@ func Run(app *App, adapter Adapter, argv []string, stdout, stderr io.Writer) int
 		if exec.streamWriteErr != nil {
 			return ExitOperational
 		}
+		app.injectPendingSignal(adapter, sigCh)
 		return app.exitAfterOutput(exec, sigCh, stderr)
 	}
 
@@ -85,16 +86,7 @@ func Run(app *App, adapter Adapter, argv []string, stdout, stderr io.Writer) int
 	if seams, ok := adapter.(TestSeams); ok {
 		seams.BeforeWrite()
 	}
-	if !app.HandlerOwnedSignals {
-		if seams, ok := adapter.(TestSeams); ok {
-			if sig, ok := seams.PendingSignal(); ok {
-				select {
-				case sigCh <- sig:
-				default:
-				}
-			}
-		}
-	}
+	app.injectPendingSignal(adapter, sigCh)
 
 	// The result is the machine-readable record; this line keeps the
 	// stderr diagnostic promise for handler failures.
@@ -110,29 +102,39 @@ func Run(app *App, adapter Adapter, argv []string, stdout, stderr io.Writer) int
 }
 
 // exitAfterOutput runs the phase both output modes share once their output is
-// written: the adapter's summary hook, a test-injected signal, a signal that
-// arrived during the output, and the adapter's exit classification. Raw
-// commands write their own output and never reach it.
+// written: the adapter's summary hook, a signal that arrived during the
+// output, and the adapter's exit classification. Raw commands write their own
+// output and never reach it.
 func (app *App) exitAfterOutput(exec *execution, sigCh chan os.Signal, stderr io.Writer) int {
 	if after, ok := exec.adapter.(AfterWrite); ok {
 		after.AfterWrite(exec.inv, exec.result, stderr)
 	}
-	if !app.HandlerOwnedSignals {
-		if seams, ok := exec.adapter.(TestSeams); ok {
-			if sig, ok := seams.PendingSignal(); ok {
-				select {
-				case sigCh <- sig:
-				default:
-				}
-			}
-		}
-		// A signal that arrived during the output still wins on exit code,
-		// even though the output may already be written.
-		if code, ok := app.pendingSignal(sigCh); ok {
-			return code
-		}
+	// A signal that arrived during the output still wins on exit code, even
+	// though the output may already be written.
+	if code, ok := app.pendingSignal(sigCh); ok {
+		return code
 	}
 	return exec.adapter.ExitCode(exec.inv, exec.result, exec.handlerErr)
+}
+
+// injectPendingSignal feeds a test-only signal into the exit-code check, the
+// way one that arrived while the output was written would.
+func (app *App) injectPendingSignal(adapter Adapter, sigCh chan os.Signal) {
+	if app.HandlerOwnedSignals {
+		return
+	}
+	seams, ok := adapter.(TestSeams)
+	if !ok {
+		return
+	}
+	sig, ok := seams.PendingSignal()
+	if !ok {
+		return
+	}
+	select {
+	case sigCh <- sig:
+	default:
+	}
 }
 
 // pendingSignal reports the shell exit code for a terminating signal the
