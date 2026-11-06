@@ -376,6 +376,45 @@ func TestRunDispatchDiagnostics(t *testing.T) {
 		}
 	})
 
+	t.Run("masked first error keeps its own command", func(t *testing.T) {
+		adapter := &diagAdapter{testAdapter: &testAdapter{}}
+		// Two passes: -state-dir fails at the root (unknown command "x"
+		// blocks resolution), the rewrite consumes x as --state-dir's
+		// value, and pass 1 resolves the deeper store reset and fails
+		// there. The reported error is pass 0's, so the extension must see
+		// the root's app name, not store reset.
+		code, _, _ := runApp(t, testApp(), adapter, "-state-dir", "x", "-json", "store", "reset", "extra")
+		if code != 2 {
+			t.Fatalf("exit code = %d, want 2", code)
+		}
+		if adapter.gotDispatchCmd != "testcli" {
+			t.Errorf("command = %q, want the app name paired with the first pass's error", adapter.gotDispatchCmd)
+		}
+	})
+
+	t.Run("raw-command failures keep HandlerDiagnostics", func(t *testing.T) {
+		app := &App{Name: "testcli", Commands: []*Command{{
+			Name:  "dump",
+			Short: "dump the state",
+			Raw: func(ctx context.Context, inv Invocation, stdout io.Writer) error {
+				return errors.New("dump failed")
+			},
+		}}}
+		adapter := &diagAdapter{testAdapter: &testAdapter{}, handlerLine: "handler line"}
+		code, _, stderr := runApp(t, app, adapter, "dump")
+		// The usage classification of a raw failure is the pre-existing
+		// behavior; the change under test is only the stderr hook.
+		if code != 2 {
+			t.Fatalf("exit code = %d, want 2 (stderr: %s)", code, stderr)
+		}
+		if stderr != "handler line\n" {
+			t.Errorf("stderr = %q, want the handler diagnostic", stderr)
+		}
+		if adapter.gotDispatchCmd != "" {
+			t.Errorf("DispatchDiagnostic ran for a raw-command failure (%q)", adapter.gotDispatchCmd)
+		}
+	})
+
 	t.Run("handler failures keep HandlerDiagnostics", func(t *testing.T) {
 		adapter := &diagAdapter{testAdapter: &testAdapter{}, dispatchLine: "dispatch", handlerLine: "handler line"}
 		code, _, stderr := runApp(t, testApp(), adapter, "wait", "--consumer", "fail", "u")

@@ -392,7 +392,7 @@ func (a *App) buildTree(exec *execution, runHandlers bool) *cobra.Command {
 	// through FlagErrorFunc.
 	root.SetFlagErrorFunc(func(cmd *cobra.Command, err error) error {
 		exec.flagErrCmd, exec.flagErr = cmd, err
-		return a.errf(a.pathOf(root, cmd), "%v", err)
+		return a.errf(a.pathOf(cmd), "%v", err)
 	})
 	// The default help command reports unknown topics on stdout and exits
 	// 0, breaching the one-JSON-envelope contract; this replacement routes
@@ -444,11 +444,11 @@ func (a *App) buildTree(exec *execution, runHandlers bool) *cobra.Command {
 
 // pathOf derives the full command path for diagnostics: the app name at
 // the root, parent names joined with spaces below it.
-func (a *App) pathOf(root *cobra.Command, c *cobra.Command) string {
-	if c == root {
-		return a.Name
+func (a *App) pathOf(c *cobra.Command) string {
+	if names := commandPath(c); len(names) > 0 {
+		return strings.Join(names, " ")
 	}
-	return strings.Join(commandPath(c), " ")
+	return a.Name
 }
 
 // commandPath is the names a resolved command contributes to argv: its own

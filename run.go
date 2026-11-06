@@ -6,7 +6,6 @@ import (
 	"io"
 	"os"
 	"os/signal"
-	"strings"
 	"syscall"
 
 	"github.com/spf13/cobra"
@@ -44,9 +43,16 @@ func Run(app *App, adapter Adapter, argv []string, stdout, stderr io.Writer) int
 		// envelope and exit 2.
 		err = asUsageError(err)
 		adapter.Write(stdout, adapter.ErrorResult(command, err))
-		// Dispatch-level errors are self-prefixed: the messages are built
-		// under the app's error prefix at the validation sites.
-		writeDispatchDiagnostic(adapter, stderr, exec.diagCommand(command, app.Name), err)
+		if exec.ran || exec.rawRan {
+			// A dispatched command owns the failure — a Validate rejection
+			// or a raw-output command's error — so the handler-diagnostic
+			// hook formats its line.
+			writeDiagnostic(adapter, stderr, exec.inv, err)
+		} else {
+			// Dispatch-level errors are self-prefixed: the messages are
+			// built under the app's error prefix at the validation sites.
+			writeDispatchDiagnostic(adapter, stderr, exec.diagCommand(command), err)
+		}
 		return adapter.ExitCode(Invocation{Command: command}, nil, err)
 	}
 	// Help paths (bare --help, the help command, <command> --help) print
@@ -149,6 +155,7 @@ func writeDiagnostic(adapter Adapter, stderr io.Writer, inv Invocation, err erro
 // parse error that triggered it.
 func (a *App) execute(exec *execution, runHandlers bool, argv []string, stdout, stderr io.Writer, ctx context.Context) error {
 	var firstErr error
+	var firstCmd *cobra.Command
 	limit := len(effectiveArgv(argv)) + 1
 	for attempt := 0; attempt < limit; attempt++ {
 		// Each pass records its own flag failure: the command cobra
@@ -158,24 +165,27 @@ func (a *App) execute(exec *execution, runHandlers bool, argv []string, stdout, 
 		// ExecuteContext is ExecuteContextC with the command discarded; the
 		// command is what the dispatch-diagnostic extensions need.
 		cmd, err := root.ExecuteContextC(ctx)
-		exec.failCmd = cmd
 		if err == nil {
 			return nil
 		}
 		if attempt == 0 {
-			firstErr = err
+			firstErr, firstCmd = err, cmd
 		}
 		if exec.ran || exec.rawRan {
 			return err
 		}
 		retryArgv := a.retryArgv(exec, root, argv)
 		if retryArgv == nil {
+			// The reported error is the first pass's: its own resolved
+			// command must pair with it, not the last pass's.
+			exec.failCmd = firstCmd
 			return firstErr
 		}
 		// The failure preceded every RunE, so no handler has run: rebuild
 		// for clean flag state and parse the rewritten argv again.
 		argv = retryArgv
 	}
+	exec.failCmd = firstCmd
 	return firstErr
 }
 
@@ -190,17 +200,18 @@ func readyTree(a *App, exec *execution, runHandlers bool, argv []string, stdout,
 }
 
 // HandlerDiagnostics is an optional Adapter extension that formats the
-// stderr diagnostic for handler failures. The default prints the error's
-// message; an empty string prints nothing.
+// stderr diagnostic for handler-owned failures: a dispatched command's
+// error, a Validate rejection, or a raw-output command's failure. The
+// default prints the error's message; an empty string prints nothing.
 type HandlerDiagnostics interface {
 	HandlerDiagnostic(inv Invocation, err error) string
 }
 
 // DispatchDiagnostics is an optional Adapter extension that formats the
-// stderr diagnostic for dispatch-level failures (unknown command, bad flag,
-// bad positional). The default prints the error's message; an empty string
-// prints nothing. HandlerDiagnostics is the corresponding extension for
-// handler failures.
+// stderr diagnostic for failures before dispatch (unknown command, bad
+// flag, bad positional). Once a command dispatches, its failure goes to
+// HandlerDiagnostics instead. The default prints the error's message; an
+// empty string prints nothing.
 //
 // The command argument is the path the failure resolved to: names below
 // the root joined with spaces ("store reset"), or the app name when the
@@ -212,17 +223,13 @@ type DispatchDiagnostics interface {
 }
 
 // diagCommand resolves the command name the dispatch-diagnostic extensions
-// see: the path of the command cobra resolved for the failure, or the
-// argv-derived name when the failure left no resolved command (Parse with a
-// discarded adapter, or a pass that never ran a tree).
-func (exec *execution) diagCommand(fallback, appName string) string {
+// see: the path of the command cobra resolved for the reported error, or
+// the argv-derived name when no tree ran to resolve one.
+func (exec *execution) diagCommand(fallback string) string {
 	if exec.failCmd == nil {
 		return fallback
 	}
-	if names := commandPath(exec.failCmd); len(names) > 0 {
-		return strings.Join(names, " ")
-	}
-	return appName
+	return exec.app.pathOf(exec.failCmd)
 }
 
 // Parse parses argv (without the program name) without running anything:
