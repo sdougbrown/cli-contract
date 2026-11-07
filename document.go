@@ -21,7 +21,9 @@ import (
 const SchemaDocumentV1 = "cli-contract/cli-schema/v1"
 
 // ConditionSchema describes one availability input. The declaration's Name is
-// the map key, so it is not repeated here.
+// the map key, so it is not repeated here. The registry manifest mirrors this
+// block with its own local shape (registry/conditionShape) — the manifest wire
+// must not move when this struct does, so edits land in both declarations.
 type ConditionSchema struct {
 	Type        string `json:"type"`
 	Description string `json:"description,omitempty"`
@@ -45,9 +47,12 @@ type SchemaDocument struct {
 	ExitCodes map[string]int `json:"exit_codes,omitempty"`
 }
 
-// ParseSchemaDocument decodes one schema document. Unknown members are
-// ignored: an app may carry its own facts beside the surface, and the spec's
-// JSON Schema is the strict validator.
+// ParseSchemaDocument decodes one schema document. The parser is lenient about
+// unknown members — it decodes what it knows and drops the rest — while the
+// spec's JSON Schema is the strict validator: it rejects unknown members
+// outright, and the only app facts it accepts are the reserved docs,
+// typical_flow, cli_version, and envelope. An author who adds a custom fact
+// must name it in the spec, or the strict validator will fail the document.
 func ParseSchemaDocument(data []byte) (*SchemaDocument, error) {
 	var doc SchemaDocument
 	if err := json.Unmarshal(data, &doc); err != nil {
@@ -74,7 +79,10 @@ func ParseSchemaDocument(data []byte) (*SchemaDocument, error) {
 // that declares leaf-only members. The rebuilt app shares its rules' expression
 // state and its declared output slice with the document it came from — the
 // render direction copies, the apply direction aliases; mutate the document
-// and the app moves with it.
+// and the app moves with it. The v1 document carries no handler-class marker,
+// so every rebuilt leaf runs on the Handle dispatch path: a document rendered
+// from Raw or Stream leaves rebuilds with the library's adapter writing its
+// output, not the writer those handlers own.
 //
 // Commands and flags are ordered by name: a JSON object has no order, and the
 // tree sorts commands anyway.
@@ -223,7 +231,7 @@ func flagFromSchema(name string, s FlagSchema) (Flag, error) {
 			}
 			f.Default = parsed
 		default:
-			return Flag{}, fmt.Errorf("duration default %v is neither a duration string nor a number", s.Default)
+			return Flag{}, fmt.Errorf("duration default %v is not a duration string", s.Default)
 		}
 	case Bool:
 		value, ok := s.Default.(bool)
@@ -315,14 +323,17 @@ func conditionsFromSchema(conditions map[string]ConditionSchema) []Condition {
 // cannot disagree. Like the registry manifest, it renders without building a
 // tree, so it re-checks the output declarations itself.
 func (a *App) SchemaDocument() (SchemaDocument, error) {
+	if len(a.Commands) == 0 {
+		return SchemaDocument{}, fmt.Errorf("app %q declares no commands", a.Name)
+	}
+	// The tree's validate owns the declaration checks — leaf-only shapes,
+	// output shapes, names, flags — so the render and the rebuild reject the
+	// same declarations with the same messages.
+	if err := validate(a); err != nil {
+		return SchemaDocument{}, fmt.Errorf("app %q: %w", a.Name, err)
+	}
 	var walk func(path []string, cmd *Command) error
 	walk = func(path []string, cmd *Command) error {
-		if err := ValidateLeafOnly(strings.Join(path, " "), cmd); err != nil {
-			return err
-		}
-		if err := cmd.ValidateOutput(strings.Join(path, " ")); err != nil {
-			return err
-		}
 		for _, sub := range cmd.Subcommands {
 			if err := walk(append(path, sub.Name), sub); err != nil {
 				return err

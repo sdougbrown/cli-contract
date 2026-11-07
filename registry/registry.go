@@ -133,6 +133,15 @@ func exprShapeFrom(expr *clicontract.Expr) exprShape {
 	return out
 }
 
+// conditionShape is one declared availability input. It mirrors the schema
+// document's clicontract.ConditionSchema (document.go) on the manifest wire:
+// the two declarations must move together, or the manifest and the document
+// publish different shapes for the same declared condition.
+type conditionShape struct {
+	Type        string `json:"type"`
+	Description string `json:"description,omitempty"`
+}
+
 type toolShape struct {
 	Description string         `json:"description"`
 	Command     []string       `json:"command"`
