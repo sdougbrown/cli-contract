@@ -78,7 +78,7 @@ func TestCheckReportsNonConformingTarget(t *testing.T) {
 
 	doc := filepath.Join(t.TempDir(), "schema.json")
 	document := `{
-	  "schema": "test/cli-schema/v1",
+	  "schema": "cli-contract/cli-schema/v1",
 	  "name": "target",
 	  "commands": {
 	    "only": {"short": "do one thing", "use": "only", "url_positional": false}

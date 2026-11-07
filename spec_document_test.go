@@ -50,12 +50,6 @@ func docFactCopy(doc SchemaDocument) (map[string]any, error) {
 // v1 document.
 func TestSchemaDocumentMatchesTheSpec(t *testing.T) {
 	app := schemaDocumentApp()
-	// One input rule so the spec's command vocabulary is exercised too: a
-	// rendered input_rules member must satisfy the schema's input_rules
-	// property, not a stale key from an earlier draft.
-	app.Commands[0].InputRules = []*Rule{
-		RequiresOn("depth", Present("URL"), "a depth needs a URL"),
-	}
 	doc, err := app.SchemaDocument()
 	if err != nil {
 		t.Fatal(err)

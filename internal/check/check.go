@@ -108,7 +108,7 @@ func Derive(doc *clicontract.SchemaDocument) []Case {
 				ID:      "unknown-flag:" + path,
 				Command: path,
 				Argv:    append(append([]string{}, names...), "--cli-contract-unknown-flag"),
-				Want:    Want{Exit: 2, Stderr: ClassNonEmpty},
+				Want:    Want{Exit: 2, Stdout: errorOutputClass(cmd.Output), Stderr: ClassNonEmpty},
 			},
 		)
 		if len(cmd.Subcommands) == 0 && hasRequiredPositional(cmd) {
@@ -135,6 +135,23 @@ func walk(commands map[string]clicontract.CommandSchema, prefix string, visit fu
 		if len(cmd.Subcommands) > 0 {
 			walk(cmd.Subcommands, path, visit)
 		}
+	}
+}
+
+// errorOutputClass is the stdout class a declared output mode promises on a
+// failure. A raw command's bytes are its own, and an undeclared mode promises
+// nothing, so both impose no class.
+func errorOutputClass(output *clicontract.Output) string {
+	if output == nil {
+		return ClassAny
+	}
+	switch output.Mode {
+	case clicontract.OutputJSON:
+		return ClassJSONValue
+	case clicontract.OutputNone:
+		return ClassEmpty
+	default:
+		return ClassAny
 	}
 }
 
