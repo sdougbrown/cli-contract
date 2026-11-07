@@ -84,6 +84,7 @@ func TestSchemaDocumentMatchesTheSpec(t *testing.T) {
 	facts["typical_flow"] = []string{"fetch first, then edit"}
 	facts["cli_version"] = "1.2.3"
 	facts["envelope"] = map[string]any{"ok": true}
+	facts["exit_codes"] = map[string]any{"build-failed": 31}
 	if err := validateDocument(t, facts); err != nil {
 		t.Fatalf("document with reserved app facts does not satisfy the spec:\n%v", err)
 	}
@@ -243,6 +244,20 @@ func TestSpecSchemaRejectsNonConformingDocuments(t *testing.T) {
 			name: "eitherOf rule with empty branches",
 			mutate: func(doc map[string]any) {
 				inputRule(t, doc, map[string]any{"type": "eitherOf", "group": "mode", "branches": map[string]any{}})
+			},
+		},
+		{
+			// The exit_codes fact is the spec's named-exit-codes surface: the
+			// values must stay whole non-negative integers.
+			name: "exit codes fact carries a string",
+			mutate: func(doc map[string]any) {
+				doc["exit_codes"] = map[string]any{"build-failed": "31"}
+			},
+		},
+		{
+			name: "exit codes fact carries a negative code",
+			mutate: func(doc map[string]any) {
+				doc["exit_codes"] = map[string]any{"build-failed": -1}
 			},
 		},
 	}
