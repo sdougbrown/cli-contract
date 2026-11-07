@@ -133,6 +133,17 @@ func TestSchemaDocumentRendersTheSurface(t *testing.T) {
 	})
 }
 
+// TestSchemaDocumentDetachesFromDeclaration pins the copy outputValue makes:
+// mutating the declaration after rendering must not reach the document.
+func TestSchemaDocumentDetachesFromDeclaration(t *testing.T) {
+	app := schemaDocumentApp()
+	doc := app.SchemaDocument()
+	app.Commands[0].Output.SuccessExitCodes[0] = 9
+	if got := doc.Commands["fetch"].Output.SuccessExitCodes; !reflect.DeepEqual(got, []int{0}) {
+		t.Errorf("document success codes = %v, want the rendered [0], not the mutated declaration", got)
+	}
+}
+
 // TestSchemaDocumentJSONShape pins the wire names a consumer reads, not the Go
 // field names. A consumer outside Go only ever sees these.
 func TestSchemaDocumentJSONShape(t *testing.T) {
