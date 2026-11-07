@@ -170,6 +170,33 @@ func TestCheckForwardsSchemaCommand(t *testing.T) {
 	}
 }
 
+// TestCheckSchemaFileWinsOverCommand pins the precedence rule: when both flags
+// are given, the file is authoritative, so a command the target does not serve
+// never runs.
+func TestCheckSchemaFileWinsOverCommand(t *testing.T) {
+	if testing.Short() {
+		t.Skip("builds a binary")
+	}
+	bin := buildChecker(t)
+	target := buildFixture(t)
+
+	code, report := runChecker(t, bin, "check",
+		"--schema-file", writeTargetDocument(t),
+		"--schema-command", "no-such-schema-cmd",
+		target)
+	if code != 0 || !report.OK {
+		for _, c := range report.Cases {
+			if !c.OK {
+				t.Errorf("%s (%v): %s", c.ID, c.Argv, c.Detail)
+			}
+		}
+		t.Fatalf("exit = %d, ok = %t: the schema file did not win over the schema command", code, report.OK)
+	}
+	if report.Schema != clicontract.SchemaDocumentV1 {
+		t.Errorf("schema = %q, want %q", report.Schema, clicontract.SchemaDocumentV1)
+	}
+}
+
 // TestCheckReportsNonConformingTarget keeps the verdict honest: a binary that
 // ignores the surface fails, and the report names the cases.
 func TestCheckReportsNonConformingTarget(t *testing.T) {
@@ -182,20 +209,7 @@ func TestCheckReportsNonConformingTarget(t *testing.T) {
 	}
 	bin := buildChecker(t)
 
-	doc := filepath.Join(t.TempDir(), "schema.json")
-	document := `{
-	  "schema": "cli-contract/cli-schema/v1",
-	  "name": "target",
-	  "commands": {
-	    "only": {"short": "do one thing", "use": "only", "url_positional": false}
-	  },
-	  "common_flags": {}
-	}`
-	if err := os.WriteFile(doc, []byte(document), 0o644); err != nil {
-		t.Fatal(err)
-	}
-
-	code, report := runChecker(t, bin, "check", "--schema-file", doc, target)
+	code, report := runChecker(t, bin, "check", "--schema-file", writeTargetDocument(t), target)
 	if code != 1 {
 		t.Fatalf("exit = %d, want 1: a non-conforming target is an operational failure", code)
 	}
@@ -235,21 +249,8 @@ func TestCheckMissingTargetExitsTwo(t *testing.T) {
 	}
 	bin := buildChecker(t)
 
-	doc := filepath.Join(t.TempDir(), "schema.json")
-	document := `{
-	  "schema": "cli-contract/cli-schema/v1",
-	  "name": "target",
-	  "commands": {
-	    "only": {"short": "do one thing", "use": "only", "url_positional": false}
-	  },
-	  "common_flags": {}
-	}`
-	if err := os.WriteFile(doc, []byte(document), 0o644); err != nil {
-		t.Fatal(err)
-	}
-
 	target := filepath.Join(t.TempDir(), "missing-target")
-	code, _ := runChecker(t, bin, "check", "--schema-file", doc, target)
+	code, _ := runChecker(t, bin, "check", "--schema-file", writeTargetDocument(t), target)
 	if code != 2 {
 		t.Fatalf("exit = %d, want 2: the check could not run", code)
 	}

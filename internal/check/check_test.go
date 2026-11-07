@@ -69,6 +69,39 @@ func TestDeriveNestedSubcommandPaths(t *testing.T) {
 	}
 }
 
+// TestDeriveVersionLine pins the version branch: a document declaring a
+// version requires a --version case that prints something, and a document
+// without one must not invent that case.
+func TestDeriveVersionLine(t *testing.T) {
+	doc := nestedDoc()
+	doc.Version = "1.2.3"
+	var version Case
+	found := false
+	for _, c := range Derive(doc) {
+		if c.ID == "version:root" {
+			version, found = c, true
+		}
+	}
+	if !found {
+		t.Fatal("Derive produced no version:root case for a document declaring a version")
+	}
+	if want := []string{"--version"}; !slices.Equal(version.Argv, want) {
+		t.Errorf("argv = %v, want %v", version.Argv, want)
+	}
+	if version.Want.Exit != 0 {
+		t.Errorf("exit = %d, want 0", version.Want.Exit)
+	}
+	if version.Want.Stdout != streamclass.NonEmpty {
+		t.Errorf("stdout class = %q, want %q", version.Want.Stdout, streamclass.NonEmpty)
+	}
+
+	for _, c := range Derive(nestedDoc()) {
+		if c.ID == "version:root" {
+			t.Fatal("Derive emitted a version:root case for a document with no version")
+		}
+	}
+}
+
 // TestRunTimesOut pins the hang path: a target that outlives the case timeout
 // is a failed case with an unobserved exit, not a checker failure.
 func TestRunTimesOut(t *testing.T) {
