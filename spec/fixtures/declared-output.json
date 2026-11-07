@@ -1,0 +1,51 @@
+{
+  "fixtureVersion": 1,
+  "id": "declared-output",
+  "description": "A command writes stdout as its output.mode declares: one JSON value, plain text, or nothing.",
+  "document": {
+    "schema": "cli-contract/cli-schema/v1",
+    "name": "fixture",
+    "commands": {
+      "emit-json": {
+        "short": "write one JSON value",
+        "use": "emit-json",
+        "url_positional": false,
+        "output": { "mode": "json", "success_exit_codes": [0] }
+      },
+      "emit-raw": {
+        "short": "write plain text",
+        "use": "emit-raw",
+        "url_positional": false,
+        "output": { "mode": "raw", "success_exit_codes": [0] }
+      },
+      "emit-none": {
+        "short": "write nothing",
+        "use": "emit-none",
+        "url_positional": false,
+        "output": { "mode": "none", "success_exit_codes": [0] }
+      }
+    },
+    "common_flags": {}
+  },
+  "cases": [
+    {
+      "id": "json-value",
+      "argv": ["emit-json"],
+      "expect": { "exit": 0, "stdout": { "class": "json-value" }, "stderr": { "class": "empty" } }
+    },
+    {
+      "id": "plain-text",
+      "argv": ["emit-raw"],
+      "expect": {
+        "exit": 0,
+        "stdout": { "class": "plain-text", "equals": "fixture raw output\n" },
+        "stderr": { "class": "empty" }
+      }
+    },
+    {
+      "id": "nothing",
+      "argv": ["emit-none"],
+      "expect": { "exit": 0, "stdout": { "class": "empty" }, "stderr": { "class": "empty" } }
+    }
+  ]
+}

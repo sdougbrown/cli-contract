@@ -54,8 +54,8 @@ type manifestShape struct {
 // local to this package — the wire contract must not move when the
 // declaration structs change.
 type availabilityShape struct {
-	Conditions map[string]clicontract.ConditionSchema `json:"conditions,omitempty"`
-	Rules      []ruleShape                            `json:"rules,omitempty"`
+	Conditions map[string]conditionShape `json:"conditions,omitempty"`
+	Rules      []ruleShape               `json:"rules,omitempty"`
 }
 
 // ruleShape mirrors one Umpire availability rule on the wire.
@@ -164,15 +164,15 @@ func Manifest(app *clicontract.App, opts Options) ([]byte, error) {
 	}
 	tools := map[string]toolShape{}
 	var rules []*clicontract.Rule
+	// The tree's validate owns the declaration checks — names, handler
+	// exclusivity, leaf-only shapes, availability rules, flags, outputs — so
+	// the manifest renders exactly what Run and Tree accept.
+	if err := clicontract.Validate(app); err != nil {
+		return nil, err
+	}
 	var walk func(path []string, cmd *clicontract.Command) error
 	walk = func(path []string, cmd *clicontract.Command) error {
 		if len(cmd.Subcommands) > 0 {
-			if err := clicontract.ValidateLeafOnly(strings.Join(path, " "), cmd); err != nil {
-				return err
-			}
-			if err := cmd.ValidateOutput(strings.Join(path, " ")); err != nil {
-				return err
-			}
 			for _, sub := range cmd.Subcommands {
 				if err := walk(append(path, sub.Name), sub); err != nil {
 					return err
@@ -211,9 +211,9 @@ func Manifest(app *clicontract.App, opts Options) ([]byte, error) {
 	}
 	var availability *availabilityShape
 	if len(app.AvailabilityConditions) > 0 || len(rules) > 0 {
-		conditions := make(map[string]clicontract.ConditionSchema, len(app.AvailabilityConditions))
+		conditions := make(map[string]conditionShape, len(app.AvailabilityConditions))
 		for _, c := range app.AvailabilityConditions {
-			conditions[c.Name] = clicontract.ConditionSchema{Type: c.Type, Description: c.Description}
+			conditions[c.Name] = conditionShape{Type: c.Type, Description: c.Description}
 		}
 		shapes := make([]ruleShape, 0, len(rules))
 		for _, rule := range rules {
@@ -444,9 +444,6 @@ func buildTool(opts Options, timeout string, appName string, path []string, cmd 
 	if err := validateInputRuleSubjects(full, cmd.InputRules, props); err != nil {
 		return toolShape{}, err
 	}
-	if err := cmd.ValidateOutput(full); err != nil {
-		return toolShape{}, err
-	}
 	// The declared output block wins; a command that declares none keeps the
 	// envelope-carrying default this bridge has always written.
 	output := manifestOutput(cmd.Output)
@@ -470,8 +467,9 @@ func buildTool(opts Options, timeout string, appName string, path []string, cmd 
 // them apart — coordinating a "none" mode with the cli-registry spec is the
 // spec-level fix. An undeclared command keeps the envelope-carrying default:
 // the envelope stays authoritative, so every documented code decodes.
-// A declared command renders exactly what it stated: buildTool validated the
-// block, so a declared mode always carries its success codes.
+// A declared command renders exactly what it stated: Manifest validated the
+// app through the tree's validate, so a declared mode always carries its
+// success codes.
 func manifestOutput(o clicontract.Output) map[string]any {
 	if o.Mode == "" {
 		return map[string]any{

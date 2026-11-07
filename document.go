@@ -321,7 +321,7 @@ func conditionsFromSchema(conditions map[string]ConditionSchema) []Condition {
 // SchemaDocument renders the declaration as the v1 document. It composes
 // Schemas and CommonFlagSchemas, so the per-command and aggregate renderings
 // cannot disagree. Like the registry manifest, it renders without building a
-// tree, so it re-checks the output declarations itself.
+// tree, delegating the declaration checks to the tree's validate.
 func (a *App) SchemaDocument() (SchemaDocument, error) {
 	if len(a.Commands) == 0 {
 		return SchemaDocument{}, fmt.Errorf("app %q declares no commands", a.Name)
@@ -331,20 +331,6 @@ func (a *App) SchemaDocument() (SchemaDocument, error) {
 	// same declarations with the same messages.
 	if err := validate(a); err != nil {
 		return SchemaDocument{}, fmt.Errorf("app %q: %w", a.Name, err)
-	}
-	var walk func(path []string, cmd *Command) error
-	walk = func(path []string, cmd *Command) error {
-		for _, sub := range cmd.Subcommands {
-			if err := walk(append(path, sub.Name), sub); err != nil {
-				return err
-			}
-		}
-		return nil
-	}
-	for _, cmd := range a.Commands {
-		if err := walk([]string{cmd.Name}, cmd); err != nil {
-			return SchemaDocument{}, err
-		}
 	}
 	doc := SchemaDocument{
 		Schema:              SchemaDocumentV1,

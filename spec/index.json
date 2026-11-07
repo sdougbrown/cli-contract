@@ -1,0 +1,35 @@
+{
+  "fixtureVersion": 1,
+  "fixtures": [
+    {
+      "id": "help-and-version",
+      "path": "fixtures/help-and-version.json",
+      "description": "Help exits 0 with plain text on the root, every command, and through the help command; an unknown help topic is a caller error; --version prints the declared line."
+    },
+    {
+      "id": "dispatch-failures",
+      "path": "fixtures/dispatch-failures.json",
+      "description": "Unknown commands, flags, and malformed flag values, plus missing and extra positionals, are usage errors: exit 2 with the app's error output and a diagnostic."
+    },
+    {
+      "id": "signals",
+      "path": "fixtures/signals.json",
+      "description": "SIGINT exits 130 and SIGTERM 143 when the app does not own signals."
+    },
+    {
+      "id": "signals-handler-owned",
+      "path": "fixtures/signals-handler-owned.json",
+      "description": "An app that declares handler_owned_signals chooses its own exit code; the library does not override it."
+    },
+    {
+      "id": "single-dash",
+      "path": "fixtures/single-dash.json",
+      "description": "Single-dash long flags are rewritten, while declared shorthands, value-taking flags, the -- terminator, NoInterspersed, and leaf-only flags before a subcommand keep their meanings."
+    },
+    {
+      "id": "declared-output",
+      "path": "fixtures/declared-output.json",
+      "description": "A command writes stdout as its output.mode declares: one JSON value, plain text, or nothing."
+    }
+  ]
+}

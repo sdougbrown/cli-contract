@@ -17,7 +17,7 @@ disposition.
 `App.SchemaDocument()` in the Go library renders one; any implementation can
 render the same shape.
 
-A document has three required members and a closed set of optional ones:
+A document has two required members and a closed set of optional ones:
 
 | Member | Meaning |
 |---|---|
