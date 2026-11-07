@@ -272,7 +272,6 @@ func TestSchemasZeroesParentRules(t *testing.T) {
 		t.Errorf("parent input rules = %+v, want none on a command with subcommands", schemas["store"].InputRules)
 	}
 }
-
 func TestDocumentAppAppliesHandWrittenDefaults(t *testing.T) {
 	doc := &SchemaDocument{
 		Schema: "cli-contract/cli-schema/v1",
