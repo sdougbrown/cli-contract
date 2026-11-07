@@ -181,6 +181,70 @@ func TestSpecSchemaRejectsNonConformingDocuments(t *testing.T) {
 				flag["default"] = []any{"draft", 7}
 			},
 		},
+		{
+			// The per-kind rule constraints: the schema must reject what the
+			// reference apply path rejects (validateRule), so a hand-written
+			// rule the validator accepts but the walk would reject cannot
+			// masquerade as a conforming document.
+			name: "enabledWhen rule without a condition",
+			mutate: func(doc map[string]any) {
+				inputRule(t, doc, map[string]any{"type": "enabledWhen", "field": "depth"})
+			},
+		},
+		{
+			name: "requires rule without a condition",
+			mutate: func(doc map[string]any) {
+				inputRule(t, doc, map[string]any{"type": "requires", "field": "depth"})
+			},
+		},
+		{
+			name: "disables rule without a condition",
+			mutate: func(doc map[string]any) {
+				inputRule(t, doc, map[string]any{"type": "disables", "targets": []any{"depth"}})
+			},
+		},
+		{
+			name: "disables rule without targets",
+			mutate: func(doc map[string]any) {
+				inputRule(t, doc, map[string]any{"type": "disables", "when": map[string]any{"op": "present", "field": "depth"}})
+			},
+		},
+		{
+			name: "disables rule with empty targets",
+			mutate: func(doc map[string]any) {
+				inputRule(t, doc, map[string]any{"type": "disables", "when": map[string]any{"op": "present", "field": "depth"}, "targets": []any{}})
+			},
+		},
+		{
+			name: "anyOf rule without rules",
+			mutate: func(doc map[string]any) {
+				inputRule(t, doc, map[string]any{"type": "anyOf"})
+			},
+		},
+		{
+			name: "anyOf rule with empty rules",
+			mutate: func(doc map[string]any) {
+				inputRule(t, doc, map[string]any{"type": "anyOf", "rules": []any{}})
+			},
+		},
+		{
+			name: "eitherOf rule without a group",
+			mutate: func(doc map[string]any) {
+				inputRule(t, doc, map[string]any{"type": "eitherOf", "branches": map[string]any{"mode": []any{map[string]any{"type": "enabledWhen", "when": map[string]any{"op": "truthy", "field": "depth"}}}}})
+			},
+		},
+		{
+			name: "eitherOf rule without branches",
+			mutate: func(doc map[string]any) {
+				inputRule(t, doc, map[string]any{"type": "eitherOf", "group": "mode"})
+			},
+		},
+		{
+			name: "eitherOf rule with empty branches",
+			mutate: func(doc map[string]any) {
+				inputRule(t, doc, map[string]any{"type": "eitherOf", "group": "mode", "branches": map[string]any{}})
+			},
+		},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -202,6 +266,14 @@ func TestSpecSchemaRejectsNonConformingDocuments(t *testing.T) {
 			}
 		})
 	}
+}
+
+// inputRule installs one hand-written rule as fetch's only input rule, so a
+// case can hand the schema a rule the reference walk would reject.
+func inputRule(t *testing.T, doc map[string]any, body map[string]any) {
+	t.Helper()
+	fetch := commandMember(t, doc, "fetch").(map[string]any)
+	fetch["input_rules"] = []any{body}
 }
 
 // commandMember walks commands.<command>.<key> and returns the value, failing
