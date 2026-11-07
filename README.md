@@ -199,13 +199,14 @@ common := app.CommonFlagSchemas()
 
 `SchemaDocument` renders the declared surface as one document: the command
 entries, the common flags, the availability conditions, and the signal
-convention the library owns. `CommandSchema` and `FlagSchema` carry names,
-help text, structured positionals, Use strings, URL positionals, single-dash
-behavior, flag kinds (`string`/`bool`/`repeat`/`integer`/`duration`), usage
-strings, defaults, declared shorthands (`short`, omitted when a flag has
-none), input and availability rules, and the output declaration. Compose the
-app's own facts (statuses, error codes, envelope fields, named exit codes)
-around it before encoding.
+convention the library owns. The shape is specified in [spec/](spec/).
+`CommandSchema` and `FlagSchema` carry names, help text, structured
+positionals, Use strings, URL positionals, single-dash behavior, flag kinds
+(`string`/`bool`/`repeat`/`integer`/`duration`), usage strings, defaults,
+declared shorthands (`short`, omitted when a flag has none), input and
+availability rules, and the output declaration. Compose the app's own facts
+(statuses, error codes, envelope fields, named exit codes) around it before
+encoding.
 
 ### Output declaration
 
@@ -225,6 +226,31 @@ to the manifest's `json-pointer` mode and `none` to `raw`, since a command
 that writes nothing has nothing to decode. A declared mode requires
 `SuccessExitCodes`, so a declared block publishes exactly the codes its author
 stated and the envelope default stays unique to commands that declare none.
+
+The v1 spec's [conformance fixtures](spec/) run against the library as part of
+`go test ./...`, so the written contract and the implementation are checked
+together.
+
+## Check a CLI
+
+```sh
+go build -o cli-contract ./cmd/cli-contract
+./cli-contract check ./mycli                        # runs `mycli schema`
+./cli-contract check --schema-file doc.json ./mycli  # for a CLI with no schema command
+```
+
+The checker reads the schema document, derives the cases the declared surface
+implies — help on every command, an unknown flag on every command, an unknown
+command, a missing required positional, the version line — and runs them
+against the binary as a black box. A CLI that does not use this library
+conforms if it passes.
+
+The report is one JSON value with one entry per case. Exit 0 means every case
+passed, 1 means at least one failed, and 2 means the check could not run. Signal
+cases are not derived: they need a command that stays alive, which the surface
+does not declare. The scheduled
+[consumer workflow](.github/workflows/conformance.yml) runs the checker against
+pinned releases of the CLIs that use the library.
 
 ## Availability
 
