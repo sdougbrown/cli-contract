@@ -1,0 +1,27 @@
+{
+  "fixtureVersion": 1,
+  "id": "signals-handler-owned",
+  "description": "An app that declares handler_owned_signals chooses its own exit code; the library does not override it.",
+  "document": {
+    "schema": "cli-contract/cli-schema/v1",
+    "name": "fixture",
+    "commands": {
+      "serve": {
+        "short": "run the service",
+        "use": "serve",
+        "url_positional": false,
+        "output": { "mode": "json", "success_exit_codes": [0] }
+      }
+    },
+    "common_flags": {},
+    "handler_owned_signals": true
+  },
+  "cases": [
+    {
+      "id": "handler-owns-sigint",
+      "argv": ["serve"],
+      "signal": "SIGINT",
+      "expect": { "exit": 0 }
+    }
+  ]
+}

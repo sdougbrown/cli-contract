@@ -1,0 +1,96 @@
+{
+  "fixtureVersion": 1,
+  "id": "help-and-version",
+  "description": "Help exits 0 with plain text on the root, every command, and through the help command; an unknown help topic is a caller error; --version prints the declared line.",
+  "document": {
+    "schema": "cli-contract/cli-schema/v1",
+    "name": "fixture",
+    "version": "1.0.0",
+    "commands": {
+      "fetch": {
+        "short": "fetch a resource",
+        "use": "fetch <URL>",
+        "positionals": [{ "name": "URL", "required": true }],
+        "url_positional": true,
+        "flags": {
+          "depth": { "kind": "integer", "usage": "fetch depth", "default": 3 }
+        },
+        "output": { "mode": "json", "success_exit_codes": [0] }
+      },
+      "store": {
+        "short": "store utilities",
+        "use": "store",
+        "url_positional": false,
+        "flags": {
+          "store-dir": { "kind": "string", "usage": "store directory", "default": "" }
+        },
+        "subcommands": {
+          "path": {
+            "short": "print the store path",
+            "use": "path",
+            "url_positional": false,
+            "output": { "mode": "json", "success_exit_codes": [0] }
+          },
+          "reset": {
+            "short": "delete the store",
+            "use": "reset",
+            "url_positional": false,
+            "flags": {
+              "target": { "kind": "string", "usage": "scope the reset", "default": "" }
+            },
+            "output": { "mode": "json", "success_exit_codes": [0] }
+          }
+        }
+      }
+    },
+    "common_flags": {
+      "json": { "kind": "bool", "usage": "no-op; output is always JSON", "default": false }
+    }
+  },
+  "cases": [
+    {
+      "id": "root-help",
+      "argv": ["--help"],
+      "expect": { "exit": 0, "stdout": { "class": "plain-text" }, "stderr": { "class": "empty" } }
+    },
+    {
+      "id": "command-help",
+      "argv": ["fetch", "--help"],
+      "expect": { "exit": 0, "stdout": { "class": "plain-text" }, "stderr": { "class": "empty" } }
+    },
+    {
+      "id": "parent-help",
+      "argv": ["store", "--help"],
+      "expect": { "exit": 0, "stdout": { "class": "plain-text" }, "stderr": { "class": "empty" } }
+    },
+    {
+      "id": "nested-help",
+      "argv": ["store", "reset", "--help"],
+      "expect": { "exit": 0, "stdout": { "class": "plain-text" }, "stderr": { "class": "empty" } }
+    },
+    {
+      "id": "help-command",
+      "argv": ["help"],
+      "expect": { "exit": 0, "stdout": { "class": "plain-text" }, "stderr": { "class": "empty" } }
+    },
+    {
+      "id": "help-topic",
+      "argv": ["help", "fetch"],
+      "expect": { "exit": 0, "stdout": { "class": "plain-text" }, "stderr": { "class": "empty" } }
+    },
+    {
+      "id": "unknown-help-topic",
+      "argv": ["help", "nope"],
+      "expect": { "exit": 2, "stdout": { "class": "json-value" }, "stderr": { "class": "non-empty" } }
+    },
+    {
+      "id": "version",
+      "argv": ["--version"],
+      "expect": {
+        "exit": 0,
+        "stdout": { "class": "plain-text", "equals": "fixture 1.0.0\n" },
+        "stderr": { "class": "empty" }
+      }
+    }
+  ]
+}
