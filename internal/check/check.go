@@ -27,6 +27,11 @@ const (
 	schemaTimeout = 30 * time.Second
 )
 
+// timedOutExit is the sentinel Got.Exit carries when the process was killed
+// before it exited: no real exit code was observed, and the JSON report must
+// not claim 0.
+const timedOutExit = -1
+
 // Stream class names a case may require. They mirror the fixture classes, so a
 // black-box case and a fixture case state the same thing.
 const (
@@ -150,13 +155,18 @@ func hasRequiredPositional(cmd clicontract.CommandSchema) bool {
 // Run executes every case against target. target is the binary plus any fixed
 // arguments; each case's argv is appended to it.
 func Run(target []string, cases []Case) ([]Result, error) {
+	return run(target, cases, caseTimeout)
+}
+
+// run is Run under a caller-chosen per-case timeout.
+func run(target []string, cases []Case, timeout time.Duration) ([]Result, error) {
 	if len(target) == 0 {
 		return nil, errors.New("check: no target binary")
 	}
 	results := make([]Result, 0, len(cases))
 	for _, c := range cases {
 		argv := append(append([]string{}, target...), c.Argv...)
-		ctx, cancel := context.WithTimeout(context.Background(), caseTimeout)
+		ctx, cancel := context.WithTimeout(context.Background(), timeout)
 		var stdout, stderr bytes.Buffer
 		cmd := exec.CommandContext(ctx, argv[0], argv[1:]...)
 		cmd.Stdout, cmd.Stderr = &stdout, &stderr
@@ -165,7 +175,8 @@ func Run(target []string, cases []Case) ([]Result, error) {
 		cancel()
 		got := Got{Stdout: stdout.String(), Stderr: stderr.String()}
 		if timedOut {
-			results = append(results, Result{Case: c, Got: got, Detail: fmt.Sprintf("timed out after %s", caseTimeout)})
+			got.Exit = timedOutExit
+			results = append(results, Result{Case: c, Got: got, Detail: fmt.Sprintf("timed out after %s", timeout)})
 			continue
 		}
 		if err != nil {
@@ -246,9 +257,6 @@ func LoadDocument(target []string, schemaFile, schemaCommand string) (*clicontra
 	}
 	if len(target) == 0 {
 		return nil, errors.New("check: no target binary")
-	}
-	if schemaCommand == "" {
-		schemaCommand = "schema"
 	}
 	argv := append(append([]string{}, target...), schemaCommand)
 	ctx, cancel := context.WithTimeout(context.Background(), schemaTimeout)

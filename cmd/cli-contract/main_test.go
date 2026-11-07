@@ -2,11 +2,13 @@ package main
 
 import (
 	"encoding/json"
+	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"testing"
 
+	"github.com/sdougbrown/cli-contract"
 	"github.com/sdougbrown/cli-contract/internal/check"
 )
 
@@ -40,6 +42,32 @@ func runChecker(t *testing.T, bin string, argv ...string) (int, check.Report) {
 		t.Fatalf("decode report (%q): %v", out, err)
 	}
 	return code, report
+}
+
+// TestAdapterErrorCodes pins the envelope split the reference adapters use:
+// a caller mistake is a usage error, anything else is internal.
+func TestAdapterErrorCodes(t *testing.T) {
+	cases := []struct {
+		name string
+		err  error
+		want string
+	}{
+		{name: "usage", err: &clicontract.UsageError{Message: "bad schema file"}, want: "usage"},
+		{name: "internal", err: errors.New("boom"), want: "internal"},
+	}
+	for _, c := range cases {
+		env, ok := adapter{}.ErrorResult("check", c.err).(map[string]any)
+		if !ok {
+			t.Fatalf("%s: ErrorResult returned %T, want map[string]any", c.name, adapter{}.ErrorResult("check", c.err))
+		}
+		errObj, ok := env["error"].(map[string]any)
+		if !ok {
+			t.Fatalf("%s: error member = %T, want map[string]any", c.name, env["error"])
+		}
+		if code, _ := errObj["code"].(string); code != c.want {
+			t.Errorf("%s: code = %q, want %q", c.name, code, c.want)
+		}
+	}
 }
 
 // TestCheckItself is the end-to-end proof: the checker's own declared surface

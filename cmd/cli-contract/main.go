@@ -33,10 +33,15 @@ func main() {
 type adapter struct{}
 
 func (adapter) ErrorResult(command string, err error) any {
+	code := "internal"
+	var usage *clicontract.UsageError
+	if errors.As(err, &usage) {
+		code = "usage"
+	}
 	return map[string]any{
 		"command": command,
 		"status":  "error",
-		"error":   map[string]any{"code": "internal", "message": err.Error()},
+		"error":   map[string]any{"code": code, "message": err.Error()},
 	}
 }
 
