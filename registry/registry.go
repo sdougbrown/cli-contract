@@ -170,6 +170,9 @@ func Manifest(app *clicontract.App, opts Options) ([]byte, error) {
 					strings.Join(path, " "),
 				)
 			}
+			if err := cmd.ValidateOutput(strings.Join(path, " ")); err != nil {
+				return err
+			}
 			for _, sub := range cmd.Subcommands {
 				if err := walk(append(path, sub.Name), sub); err != nil {
 					return err
@@ -438,14 +441,14 @@ func buildTool(opts Options, timeout string, appName string, path []string, cmd 
 		inputSchema["required"] = required
 	}
 
-	// Envelope-carrying CLIs report through their exit codes; the envelope
-	// stays authoritative, so every documented code decodes.
-	output := map[string]any{
-		"mode":               "json",
-		"success_exit_codes": []int{0, 1, 2, 3, 4},
-	}
+	// The declared output block wins; a command that declares none keeps the
+	// envelope-carrying default this bridge has always written.
+	output := manifestOutput(cmd.Output)
 
 	if err := validateInputRuleSubjects(full, cmd.InputRules, props); err != nil {
+		return toolShape{}, err
+	}
+	if err := cmd.ValidateOutput(full); err != nil {
 		return toolShape{}, err
 	}
 
@@ -458,6 +461,38 @@ func buildTool(opts Options, timeout string, appName string, path []string, cmd 
 		Bindings:    bindings,
 		Output:      output,
 	}, nil
+}
+
+// manifestOutput renders one command's output block for a manifest. The
+// manifest's vocabulary predates this declaration: it spells a pointered JSON
+// result "json-pointer" and has no "none", so those two translate here, in the
+// one place that speaks both. An undeclared command keeps the envelope-carrying
+// default: the envelope stays authoritative, so every documented code decodes.
+// A declared command renders exactly what it stated: buildTool validated the
+// block, so a declared mode always carries its success codes.
+func manifestOutput(o clicontract.Output) map[string]any {
+	if o.Mode == "" {
+		return map[string]any{
+			"mode":               "json",
+			"success_exit_codes": []int{0, 1, 2, 3, 4},
+		}
+	}
+	mode := string(o.Mode)
+	switch o.Mode {
+	case clicontract.OutputJSON:
+		if o.JSONPointer != "" {
+			mode = "json-pointer"
+		}
+	case clicontract.OutputNone:
+		// Nothing to decode; the exit code carries the whole result.
+		mode = "raw"
+	}
+	out := map[string]any{"mode": mode}
+	if o.JSONPointer != "" {
+		out["json_pointer"] = o.JSONPointer
+	}
+	out["success_exit_codes"] = o.SuccessExitCodes
+	return out
 }
 
 // ruleShapesFrom converts a declared rule list to its wire shape, skipping nil

@@ -26,17 +26,38 @@ const (
 	ExitOperational = 1
 )
 
+// signalExits is the library's signal convention in one place: each handled
+// signal, its name as the schema document carries it, and its shell-style
+// exit code. SignalExitCode and SignalExitCodes both derive from it, so a
+// signal added here reaches the runtime and the document together.
+var signalExits = []struct {
+	name string
+	sig  os.Signal
+	code int
+}{
+	{"SIGINT", os.Interrupt, 130},
+	{"SIGTERM", syscall.SIGTERM, 143},
+}
+
 // SignalExitCode maps terminating signals to shell-style exit codes: SIGINT
 // exits 130 and SIGTERM exits 143.
 func SignalExitCode(sig os.Signal) int {
-	switch sig {
-	case os.Interrupt:
-		return 130
-	case syscall.SIGTERM:
-		return 143
-	default:
-		return ExitOperational
+	for _, s := range signalExits {
+		if s.sig == sig {
+			return s.code
+		}
 	}
+	return ExitOperational
+}
+
+// SignalExitCodes renders the library's signal convention as data, keyed by
+// the signal name a schema document carries.
+func SignalExitCodes() map[string]int {
+	out := make(map[string]int, len(signalExits))
+	for _, s := range signalExits {
+		out[s.name] = s.code
+	}
+	return out
 }
 
 // Adapter is the app's result vocabulary. The library routes invocations and
