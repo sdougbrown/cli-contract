@@ -1,0 +1,238 @@
+{
+  "fixtureVersion": 1,
+  "id": "single-dash",
+  "description": "Single-dash long flags are rewritten, while declared shorthands, value-taking flags, the -- terminator, NoInterspersed, and leaf-only flags before a subcommand keep their meanings.",
+  "document": {
+    "schema": "cli-contract/cli-schema/v1",
+    "name": "fixture",
+    "commands": {
+      "probe": {
+        "short": "probe a target",
+        "use": "probe <TARGET>",
+        "positionals": [
+          {
+            "name": "TARGET",
+            "required": true
+          }
+        ],
+        "url_positional": true,
+        "flags": {
+          "agent": {
+            "kind": "string",
+            "usage": "agent name",
+            "default": ""
+          },
+          "label": {
+            "kind": "string",
+            "usage": "label",
+            "default": ""
+          },
+          "verbose": {
+            "kind": "bool",
+            "usage": "log verbosely",
+            "default": false,
+            "short": "v"
+          },
+          "brief": {
+            "kind": "bool",
+            "usage": "log briefly",
+            "default": false,
+            "short": "b"
+          }
+        },
+        "output": {
+          "mode": "json", "success_exit_codes": [0] }
+      },
+      "echo": {
+        "short": "echo positionals",
+        "use": "echo [ARG...]",
+        "positionals": [
+          {
+            "name": "ARG",
+            "variadic": true
+          }
+        ],
+        "url_positional": false,
+        "no_interspersed": true,
+        "output": {
+          "mode": "json", "success_exit_codes": [0] }
+      }
+    },
+    "common_flags": {
+      "format": {
+        "kind": "string",
+        "usage": "output format",
+        "default": ""
+      }
+    }
+  },
+  "cases": [
+    {
+      "id": "long-flag-with-single-dash",
+      "argv": [
+        "probe",
+        "-agent",
+        "x",
+        "tgt"
+      ],
+      "expect": {
+        "exit": 0,
+        "stdout": {
+          "class": "json-matches",
+          "pointer": "/flags/agent",
+          "equals": "x"
+        }
+      }
+    },
+    {
+      "id": "shorthand-cluster-sets-first-bool",
+      "argv": [
+        "probe",
+        "-vb",
+        "tgt"
+      ],
+      "expect": {
+        "exit": 0,
+        "stdout": {
+          "class": "json-matches",
+          "pointer": "/bools/verbose",
+          "equals": true
+        }
+      }
+    },
+    {
+      "id": "shorthand-cluster-sets-second-bool",
+      "argv": [
+        "probe",
+        "-vb",
+        "tgt"
+      ],
+      "expect": {
+        "exit": 0,
+        "stdout": {
+          "class": "json-matches",
+          "pointer": "/bools/brief",
+          "equals": true
+        }
+      }
+    },
+    {
+      "id": "shorthand-cluster-clears-value",
+      "argv": [
+        "probe",
+        "-vb=false",
+        "tgt"
+      ],
+      "expect": {
+        "exit": 0,
+        "stdout": {
+          "class": "json-matches",
+          "pointer": "/bools/brief",
+          "equals": false
+        }
+      }
+    },
+    {
+      "id": "shorthand-cluster-records-supplied",
+      "argv": [
+        "probe",
+        "-vb=false",
+        "tgt"
+      ],
+      "expect": {
+        "exit": 0,
+        "stdout": {
+          "class": "json-matches",
+          "pointer": "/supplied/brief",
+          "equals": true
+        }
+      }
+    },
+    {
+      "id": "value-flag-keeps-single-dash-value",
+      "argv": [
+        "probe",
+        "--label",
+        "-format",
+        "tgt"
+      ],
+      "expect": {
+        "exit": 0,
+        "stdout": {
+          "class": "json-matches",
+          "pointer": "/flags/label",
+          "equals": "-format"
+        }
+      }
+    },
+    {
+      "id": "terminator-passes-dashes-through",
+      "argv": [
+        "echo",
+        "--",
+        "-agent",
+        "x"
+      ],
+      "expect": {
+        "exit": 0,
+        "stdout": {
+          "class": "json-matches",
+          "pointer": "/args/0",
+          "equals": "-agent"
+        }
+      }
+    },
+    {
+      "id": "no-interspersed-keeps-dashed-positionals",
+      "argv": [
+        "echo",
+        "tgt",
+        "-agent",
+        "x"
+      ],
+      "expect": {
+        "exit": 0,
+        "stdout": {
+          "class": "json-matches",
+          "pointer": "/args/1",
+          "equals": "-agent"
+        }
+      }
+    },
+    {
+      "id": "common-flag-before-subcommand",
+      "argv": [
+        "-format",
+        "json",
+        "probe",
+        "tgt"
+      ],
+      "expect": {
+        "exit": 0,
+        "stdout": {
+          "class": "json-matches",
+          "pointer": "/flags/format",
+          "equals": "json"
+        }
+      }
+    },
+    {
+      "id": "leaf-flag-before-subcommand-fails",
+      "argv": [
+        "-agent",
+        "x",
+        "probe",
+        "tgt"
+      ],
+      "expect": {
+        "exit": 2,
+        "stdout": {
+          "class": "json-value"
+        },
+        "stderr": {
+          "class": "non-empty"
+        }
+      }
+    }
+  ]
+}
