@@ -662,8 +662,8 @@ func TestManifestAvailabilityRejectsParentRules(t *testing.T) {
 	app.Commands[0].Availability = []*clicontract.Rule{
 		clicontract.Enabled(clicontract.When("read_only"), ""),
 	}
-	if _, err := Manifest(app, Options{Binary: "testcli"}); err == nil {
-		t.Fatal("expected Manifest to reject rules on a parent command")
+	if _, err := Manifest(app, Options{Binary: "testcli"}); err == nil || !strings.Contains(err.Error(), "declares rules but owns subcommands") {
+		t.Fatalf("err = %v, want the rules-on-parent rejection", err)
 	}
 }
 

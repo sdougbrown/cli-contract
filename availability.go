@@ -277,11 +277,8 @@ func validateAvailability(app *App) (*availabilityChecks, error) {
 	}
 	var collect func(path string, cmd *Command) error
 	collect = func(path string, cmd *Command) error {
-		if len(cmd.Subcommands) > 0 && (len(cmd.Availability) > 0 || len(cmd.InputRules) > 0) {
-			return UsageErrorf(
-				"command %q declares rules but owns subcommands; only leaf commands run as tools",
-				path,
-			)
+		if err := ValidateLeafOnly(path, cmd); err != nil {
+			return err
 		}
 		if len(cmd.Subcommands) == 0 {
 			checks.toolNames[ToolName(app.Name, path)] = true

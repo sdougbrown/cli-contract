@@ -296,6 +296,9 @@ func validateCommand(path string, c *Command, inherited []surfaceFlag, common []
 		// caller error when invoked bare.
 		return UsageErrorf("command %q must declare exactly one of Handle, Raw, or Stream", path)
 	}
+	if err := ValidateLeafOnly(path, c); err != nil {
+		return err
+	}
 	if rules := checks.rulesByCmd[c]; len(rules) > 0 {
 		if err := validateAvailabilityRules(path, rules, checks); err != nil {
 			return err
@@ -345,6 +348,23 @@ func declaresHelp(inherited []surfaceFlag, flags []Flag) bool {
 		}
 	}
 	return false
+}
+
+// ValidateLeafOnly rejects a parent that declares a member only a leaf may
+// carry: rules, positionals, or no_interspersed. Every direct-entry-point
+// walk and the tree's validate call it, so the leaf-only rule lives in one
+// place beside ValidateOutput.
+func ValidateLeafOnly(path string, cmd *Command) error {
+	if len(cmd.Subcommands) == 0 {
+		return nil
+	}
+	if len(cmd.Availability) > 0 || len(cmd.InputRules) > 0 {
+		return UsageErrorf("command %q declares rules but owns subcommands; only leaf commands run as tools", path)
+	}
+	if len(cmd.Positionals) > 0 || cmd.NoInterspersed {
+		return UsageErrorf("command %q owns subcommands and declares positionals or no_interspersed", path)
+	}
+	return nil
 }
 
 // ValidateOutput checks one command's output declaration. Only a leaf writes

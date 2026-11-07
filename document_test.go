@@ -1,12 +1,14 @@
 package clicontract
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"io"
 	"reflect"
 	"strings"
 	"testing"
+	"time"
 )
 
 // schemaDocumentApp is a declaration that exercises every member the document
@@ -30,9 +32,17 @@ func schemaDocumentApp() *App {
 				Long:           "Fetch one resource and print it.",
 				Positionals:    []Positional{{Name: "URL", Required: true}},
 				NoInterspersed: true,
-				Flags:          []Flag{{Name: "depth", Kind: Int, Usage: "fetch depth", Default: 3}},
-				Output:         Output{Mode: OutputJSON, JSONPointer: "/item", SuccessExitCodes: []int{0}},
-				Handle:         handle,
+				Flags: []Flag{
+					{Name: "depth", Kind: Int, Usage: "fetch depth", Default: 3},
+					{Name: "timeout", Kind: Duration, Usage: "fetch timeout", Default: 5 * time.Second},
+					{Name: "retries", Kind: Int, Usage: "retry count"},
+					{Name: "grace", Kind: Duration, Usage: "grace period"},
+					{Name: "verbose", Kind: Bool, Usage: "log requests", Default: true},
+					{Name: "label", Kind: String, Usage: "request label", Default: "standard"},
+					{Name: "tags", Kind: Repeat, Usage: "tags to attach", Default: []string{"draft"}},
+				},
+				Output: Output{Mode: OutputJSON, JSONPointer: "/item", SuccessExitCodes: []int{0}},
+				Handle: handle,
 			},
 			{
 				Name:        "edit",
@@ -47,7 +57,6 @@ func schemaDocumentApp() *App {
 			{
 				Name:            "store",
 				Short:           "store utilities",
-				NoInterspersed:  true,
 				PersistentFlags: []Flag{{Name: "store-dir", Kind: String, Usage: "store directory"}},
 				Subcommands: []*Command{
 					{Name: "path", Short: "print the store path", Handle: handle},
@@ -79,6 +88,12 @@ func TestSchemaDocumentRendersTheSurface(t *testing.T) {
 		}
 		if !fetch.NoInterspersed {
 			t.Error("fetch lost its no_interspersed declaration")
+		}
+		if got := fetch.Flags["retries"].Default; got != 0 {
+			t.Errorf("defaultless Int flag rendered default %v, want 0", got)
+		}
+		if got := fetch.Flags["grace"].Default; got != "0s" {
+			t.Errorf("defaultless Duration flag rendered default %v, want the duration string \"0s\"", got)
 		}
 		if fetch.Long != "Fetch one resource and print it." {
 			t.Errorf("fetch long = %q", fetch.Long)
@@ -178,6 +193,70 @@ func TestSchemaDocumentRejectsMalformedOutput(t *testing.T) {
 	}
 }
 
+// TestSchemaDocumentRejectsParentPositionals pins the render path's parent
+// guard: a parent that declares positionals or no_interspersed fails the
+// rendering, the same rejection the rebuild and the tree enforce.
+func TestSchemaDocumentRejectsParentPositionals(t *testing.T) {
+	parent := &Command{
+		Name:        "store",
+		Short:       "store utilities",
+		Positionals: []Positional{{Name: "DIR"}},
+		Subcommands: []*Command{{Name: "path", Short: "print the path"}},
+	}
+	_, err := (&App{Name: "t", Version: "v1", RootShort: "test cli", Commands: []*Command{parent}}).SchemaDocument()
+	if err == nil || !strings.Contains(err.Error(), `command "store" owns subcommands and declares positionals`) {
+		t.Fatalf("err = %v, want the parent positionals rejection", err)
+	}
+	strict := &Command{
+		Name:           "store",
+		Short:          "store utilities",
+		NoInterspersed: true,
+		Subcommands:    []*Command{{Name: "path", Short: "print the path"}},
+	}
+	_, err = (&App{Name: "t", Version: "v1", RootShort: "test cli", Commands: []*Command{strict}}).SchemaDocument()
+	if err == nil || !strings.Contains(err.Error(), `command "store" owns subcommands and declares positionals`) {
+		t.Fatalf("err = %v, want the parent no_interspersed rejection", err)
+	}
+}
+
+// TestValidateRejectsParentPositionals pins the tree path's parent guard: the
+// same declaration the document rebuild rejects cannot build a tree.
+func TestValidateRejectsParentPositionals(t *testing.T) {
+	parent := &Command{
+		Name:        "store",
+		Short:       "store utilities",
+		Positionals: []Positional{{Name: "DIR"}},
+		Subcommands: []*Command{{Name: "path", Short: "print the path", Handle: func(ctx context.Context, inv Invocation, _ io.Writer) (any, error) {
+			return nil, nil
+		}}},
+	}
+	msg := validateMessage(&App{Name: "t", Version: "v1", RootShort: "test cli", Commands: []*Command{parent}})
+	if !strings.Contains(msg, `command "store" owns subcommands and declares positionals`) {
+		t.Fatalf("validate message = %q, want the parent positionals rejection", msg)
+	}
+}
+
+// TestParseSchemaDocumentRejectsMalformedInput pins the decoder's early
+// failures: unparseable JSON and a document with no schema identifier.
+func TestParseSchemaDocumentRejectsMalformedInput(t *testing.T) {
+	if _, err := ParseSchemaDocument([]byte("not json")); err == nil {
+		t.Error("ParseSchemaDocument accepted unparseable JSON")
+	}
+	_, err := ParseSchemaDocument([]byte(`{"name": "fixture"}`))
+	if err == nil || !strings.Contains(err.Error(), "no schema id") {
+		t.Errorf("err = %v, want the missing schema id rejection", err)
+	}
+}
+
+// TestSchemaDocumentAppRejectsEmptyCommands pins the empty-commands guard.
+func TestSchemaDocumentAppRejectsEmptyCommands(t *testing.T) {
+	empty := &SchemaDocument{Schema: "cli-contract/cli-schema/v1", Commands: map[string]CommandSchema{}}
+	_, err := empty.App(nil)
+	if err == nil || !strings.Contains(err.Error(), "declares no commands") {
+		t.Errorf("err = %v, want the no-commands rejection", err)
+	}
+}
+
 // TestSchemaDocumentDetachesFromDeclaration pins the copy outputValue makes:
 // mutating the declaration after rendering must not reach the document.
 func TestSchemaDocumentDetachesFromDeclaration(t *testing.T) {
@@ -212,118 +291,132 @@ func TestSchemaDocumentJSONShape(t *testing.T) {
 	if err := json.Unmarshal(b, &wire); err != nil {
 		t.Fatal(err)
 	}
-	for _, key := range []string{"schema", "name", "version", "commands", "common_flags", "conditions", "signals"} {
-		if _, ok := wire[key]; !ok {
-			t.Errorf("document has no %q key", key)
-		}
-	}
-	if wire["schema"] != "cli-contract/cli-schema/v1" {
-		t.Errorf("schema id = %v, want the v1 identifier literal", wire["schema"])
-	}
-	if _, ok := wire["handler_owned_signals"]; ok {
-		t.Error("document declares handler_owned_signals for an app that did not")
-	}
 
-	app.CommonFlags = nil
-	doc, err = app.SchemaDocument()
-	if err != nil {
-		t.Fatal(err)
-	}
-	b, err = json.Marshal(doc)
-	if err != nil {
-		t.Fatal(err)
-	}
-	var noCommon map[string]any
-	if err := json.Unmarshal(b, &noCommon); err != nil {
-		t.Fatal(err)
-	}
-	if _, ok := noCommon["common_flags"]; ok {
-		t.Errorf("app with no common flags renders common_flags: %v", noCommon["common_flags"])
-	}
+	t.Run("header", func(t *testing.T) {
+		for _, key := range []string{"schema", "name", "version", "commands", "common_flags", "conditions", "signals"} {
+			if _, ok := wire[key]; !ok {
+				t.Errorf("document has no %q key", key)
+			}
+		}
+		if wire["schema"] != "cli-contract/cli-schema/v1" {
+			t.Errorf("schema id = %v, want the v1 identifier literal", wire["schema"])
+		}
+		if _, ok := wire["handler_owned_signals"]; ok {
+			t.Error("document declares handler_owned_signals for an app that did not")
+		}
+		app.CommonFlags = nil
+		doc, err = app.SchemaDocument()
+		if err != nil {
+			t.Fatal(err)
+		}
+		b, err = json.Marshal(doc)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var noCommon map[string]any
+		if err := json.Unmarshal(b, &noCommon); err != nil {
+			t.Fatal(err)
+		}
+		if _, ok := noCommon["common_flags"]; ok {
+			t.Errorf("app with no common flags renders common_flags: %v", noCommon["common_flags"])
+		}
+	})
 
 	commands, ok := wire["commands"].(map[string]any)
 	if !ok {
 		t.Fatal("commands is not an object")
 	}
-	fetch, ok := commands["fetch"].(map[string]any)
-	if !ok {
-		t.Fatal("commands.fetch is not an object")
-	}
-	for _, key := range []string{"short", "long", "use", "url_positional", "positionals", "no_interspersed", "input_rules", "output"} {
-		if _, ok := fetch[key]; !ok {
-			t.Errorf("commands.fetch has no %q key", key)
+
+	t.Run("fetch", func(t *testing.T) {
+		fetch, ok := commands["fetch"].(map[string]any)
+		if !ok {
+			t.Fatal("commands.fetch is not an object")
 		}
-	}
-	if _, ok := fetch["subcommands"]; ok {
-		t.Error("commands.fetch renders subcommands on a leaf")
-	}
-	if _, ok := fetch["inputRules"]; ok {
-		t.Error("commands.fetch renders the camelCase \"inputRules\" key")
-	}
-	edit, ok := commands["edit"].(map[string]any)
-	if !ok {
-		t.Fatal("commands.edit is not an object")
-	}
-	if _, ok := edit["availability"]; !ok {
-		t.Error("commands.edit has no \"availability\" key")
-	}
-	store, ok := commands["store"].(map[string]any)
-	if !ok {
-		t.Fatal("commands.store is not an object")
-	}
-	if _, ok := store["subcommands"]; !ok {
-		t.Error("commands.store has no \"subcommands\" key")
-	}
-	conditions, ok := wire["conditions"].(map[string]any)
-	if !ok {
-		t.Fatal("conditions is not an object")
-	}
-	readOnly, ok := conditions["read_only"].(map[string]any)
-	if !ok {
-		t.Fatal("conditions.read_only is not an object")
-	}
-	for _, key := range []string{"type", "description"} {
-		if _, ok := readOnly[key]; !ok {
-			t.Errorf("conditions.read_only has no %q key", key)
+		for _, key := range []string{"short", "long", "use", "url_positional", "positionals", "no_interspersed", "input_rules", "output"} {
+			if _, ok := fetch[key]; !ok {
+				t.Errorf("commands.fetch has no %q key", key)
+			}
 		}
-	}
-	positionals, ok := fetch["positionals"].([]any)
-	if !ok || len(positionals) != 1 {
-		t.Fatalf("commands.fetch positionals = %#v", fetch["positionals"])
-	}
-	urlPos, ok := positionals[0].(map[string]any)
-	if !ok {
-		t.Fatal("commands.fetch.positionals[0] is not an object")
-	}
-	if urlPos["name"] != "URL" || urlPos["required"] != true {
-		t.Errorf("commands.fetch.positionals[0] = %#v, want name URL, required true", urlPos)
-	}
-	if _, ok := urlPos["variadic"]; ok {
-		t.Error("commands.fetch.positionals[0] renders variadic on a non-variadic positional")
-	}
-	editPositionals, ok := edit["positionals"].([]any)
-	if !ok || len(editPositionals) != 1 {
-		t.Fatalf("commands.edit positionals = %#v", edit["positionals"])
-	}
-	files, ok := editPositionals[0].(map[string]any)
-	if !ok {
-		t.Fatal("commands.edit.positionals[0] is not an object")
-	}
-	if files["name"] != "files" || files["variadic"] != true {
-		t.Errorf("commands.edit.positionals[0] = %#v, want name files, variadic true", files)
-	}
-	if _, ok := files["required"]; ok {
-		t.Error("commands.edit.positionals[0] renders required on an optional positional")
-	}
-	output, ok := fetch["output"].(map[string]any)
-	if !ok {
-		t.Fatal("commands.fetch.output is not an object")
-	}
-	for _, key := range []string{"mode", "json_pointer", "success_exit_codes"} {
-		if _, ok := output[key]; !ok {
-			t.Errorf("commands.fetch.output has no %q key", key)
+		if _, ok := fetch["subcommands"]; ok {
+			t.Error("commands.fetch renders subcommands on a leaf")
 		}
-	}
+		if _, ok := fetch["inputRules"]; ok {
+			t.Error("commands.fetch renders the camelCase \"inputRules\" key")
+		}
+		positionals, ok := fetch["positionals"].([]any)
+		if !ok || len(positionals) != 1 {
+			t.Fatalf("commands.fetch positionals = %#v", fetch["positionals"])
+		}
+		urlPos, ok := positionals[0].(map[string]any)
+		if !ok {
+			t.Fatal("commands.fetch.positionals[0] is not an object")
+		}
+		if urlPos["name"] != "URL" || urlPos["required"] != true {
+			t.Errorf("commands.fetch.positionals[0] = %#v, want name URL, required true", urlPos)
+		}
+		if _, ok := urlPos["variadic"]; ok {
+			t.Error("commands.fetch.positionals[0] renders variadic on a non-variadic positional")
+		}
+		output, ok := fetch["output"].(map[string]any)
+		if !ok {
+			t.Fatal("commands.fetch.output is not an object")
+		}
+		for _, key := range []string{"mode", "json_pointer", "success_exit_codes"} {
+			if _, ok := output[key]; !ok {
+				t.Errorf("commands.fetch.output has no %q key", key)
+			}
+		}
+	})
+
+	t.Run("edit", func(t *testing.T) {
+		edit, ok := commands["edit"].(map[string]any)
+		if !ok {
+			t.Fatal("commands.edit is not an object")
+		}
+		if _, ok := edit["availability"]; !ok {
+			t.Error("commands.edit has no \"availability\" key")
+		}
+		editPositionals, ok := edit["positionals"].([]any)
+		if !ok || len(editPositionals) != 1 {
+			t.Fatalf("commands.edit positionals = %#v", edit["positionals"])
+		}
+		files, ok := editPositionals[0].(map[string]any)
+		if !ok {
+			t.Fatal("commands.edit.positionals[0] is not an object")
+		}
+		if files["name"] != "files" || files["variadic"] != true {
+			t.Errorf("commands.edit.positionals[0] = %#v, want name files, variadic true", files)
+		}
+		if _, ok := files["required"]; ok {
+			t.Error("commands.edit.positionals[0] renders required on an optional positional")
+		}
+	})
+
+	t.Run("store", func(t *testing.T) {
+		store, ok := commands["store"].(map[string]any)
+		if !ok {
+			t.Fatal("commands.store is not an object")
+		}
+		if _, ok := store["subcommands"]; !ok {
+			t.Error("commands.store has no \"subcommands\" key")
+		}
+	})
+
+	t.Run("conditions", func(t *testing.T) {
+		conditions, ok := wire["conditions"].(map[string]any)
+		if !ok {
+			t.Fatal("conditions is not an object")
+		}
+		readOnly, ok := conditions["read_only"].(map[string]any)
+		if !ok {
+			t.Fatal("conditions.read_only is not an object")
+		}
+		for _, key := range []string{"type", "description"} {
+			if _, ok := readOnly[key]; !ok {
+				t.Errorf("conditions.read_only has no %q key", key)
+			}
+		}
+	})
 }
 
 func TestSchemaDocumentHandlerOwnedSignals(t *testing.T) {
@@ -437,6 +530,259 @@ func TestValidateRejectsOutputDeclarations(t *testing.T) {
 			msg := validateMessage(&App{Name: "t", Commands: []*Command{tc.cmd}})
 			if !strings.Contains(msg, tc.want) {
 				t.Errorf("validate message = %q, want it to contain %q", msg, tc.want)
+			}
+		})
+	}
+}
+
+// docHandlers maps every leaf of schemaDocumentApp to a handler, the way a
+// fixture runner supplies them.
+func docHandlers() map[string]HandleFunc {
+	handle := func(ctx context.Context, inv Invocation, _ io.Writer) (any, error) {
+		return map[string]any{
+			"command": inv.Command,
+			"path":    inv.Path,
+			"args":    inv.Args,
+			"depth":   inv.Ints["depth"],
+			"timeout": inv.Durations["timeout"].String(),
+		}, nil
+	}
+	return map[string]HandleFunc{
+		"fetch":      handle,
+		"edit":       handle,
+		"store path": handle,
+	}
+}
+
+// TestSchemaDocumentRoundTripsThroughApp is the document's contract with a
+// runner: a document must describe enough to rebuild the app that rendered it.
+func TestSchemaDocumentRoundTripsThroughApp(t *testing.T) {
+	app := schemaDocumentApp()
+	// A handler-owned app must rebuild with the same convention: the apply-side
+	// copy of HandlerOwnedSignals is pinned by the round trip.
+	app.HandlerOwnedSignals = true
+	doc, err := app.SchemaDocument()
+	if err != nil {
+		t.Fatal(err)
+	}
+	b, err := json.Marshal(doc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	parsed, err := ParseSchemaDocument(b)
+	if err != nil {
+		t.Fatal(err)
+	}
+	app, err2 := parsed.App(docHandlers())
+	if err2 != nil {
+		t.Fatal(err2)
+	}
+	if !app.HandlerOwnedSignals {
+		t.Error("rebuilt app lost the handler-owned signals declaration")
+	}
+	got, err := app.SchemaDocument()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(got, doc) {
+		t.Errorf("document changed across the round trip:\n got %+v\nwant %+v", got, doc)
+	}
+}
+
+// TestDocumentAppRunsTheDeclaredSurface proves the rebuilt app is runnable,
+// not merely structurally equal: parsing, defaults, and nested handler keys
+// all come from the document.
+func TestDocumentAppRunsTheDeclaredSurface(t *testing.T) {
+	doc, err := schemaDocumentApp().SchemaDocument()
+	if err != nil {
+		t.Fatal(err)
+	}
+	app, err := doc.App(docHandlers())
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var stdout, stderr bytes.Buffer
+	adapter := &testAdapter{}
+	if code := Run(app, adapter, []string{"fetch", "--depth", "7", "u"}, &stdout, &stderr); code != ExitOK {
+		t.Fatalf("code = %d, stderr = %q", code, stderr.String())
+	}
+	got := adapter.wrote[0].(map[string]any)
+	if got["args"].([]string)[0] != "u" {
+		t.Errorf("args = %v", got["args"])
+	}
+	if got["depth"] != 7 {
+		t.Errorf("depth = %v, want the typed flag value", got["depth"])
+	}
+	if got["timeout"] != "5s" {
+		t.Errorf("timeout = %v, want the document's default", got["timeout"])
+	}
+
+	adapter = &testAdapter{}
+	if code := Run(app, adapter, []string{"store", "path"}, &stdout, &stderr); code != ExitOK {
+		t.Fatalf("store path code = %d, stderr = %q", code, stderr.String())
+	}
+	if got := adapter.wrote[0].(map[string]any); got["command"] != "store" {
+		t.Errorf("nested handler saw %v", got["command"])
+	}
+}
+
+func TestDocumentAppRequiresLeafHandlers(t *testing.T) {
+	doc, err := schemaDocumentApp().SchemaDocument()
+	if err != nil {
+		t.Fatal(err)
+	}
+	handlers := docHandlers()
+	delete(handlers, "store path")
+	_, err = doc.App(handlers)
+	if err == nil || !strings.Contains(err.Error(), `command "store path" declares no handler`) {
+		t.Fatalf("err = %v, want the missing handler named", err)
+	}
+}
+
+func TestDocumentAppRejectsURLMismatch(t *testing.T) {
+	doc, err := schemaDocumentApp().SchemaDocument()
+	if err != nil {
+		t.Fatal(err)
+	}
+	fetch := doc.Commands["fetch"]
+	fetch.URL = false
+	doc.Commands["fetch"] = fetch
+	_, err = doc.App(docHandlers())
+	if err == nil || !strings.Contains(err.Error(), `command "fetch" declares url_positional false but its positionals say true`) {
+		t.Fatalf("err = %v, want the inconsistency named", err)
+	}
+}
+
+// TestDocumentAppRejectsUnappliableDeclarations keeps App honest where the
+// JSON Schema cannot: a hand-written document may be shaped correctly and
+// still describe a parser it cannot build.
+func TestDocumentAppRejectsUnappliableDeclarations(t *testing.T) {
+	handle := func(ctx context.Context, inv Invocation, _ io.Writer) (any, error) {
+		return nil, nil
+	}
+	leaf := func(flags map[string]FlagSchema) map[string]CommandSchema {
+		return map[string]CommandSchema{
+			"probe": {Short: "probe", Use: "probe", Flags: flags, Output: &Output{Mode: OutputJSON, SuccessExitCodes: []int{0}}},
+		}
+	}
+	cases := []struct {
+		name     string
+		commands map[string]CommandSchema
+		want     string
+	}{
+		{
+			name:     "integer default rendered as a string",
+			commands: leaf(map[string]FlagSchema{"n": {Kind: "integer", Usage: "count", Default: "3"}}),
+			want:     "integer default 3 is not a number",
+		},
+		{
+			name:     "unparseable duration default",
+			commands: leaf(map[string]FlagSchema{"wait": {Kind: "duration", Usage: "wait", Default: "5x"}}),
+			want:     `duration default "5x"`,
+		},
+		{
+			name:     "bool default as a string",
+			commands: leaf(map[string]FlagSchema{"v": {Kind: "bool", Usage: "v", Default: "yes"}}),
+			want:     `bool default yes is not a boolean`,
+		},
+		{
+			name:     "string default as a number",
+			commands: leaf(map[string]FlagSchema{"l": {Kind: "string", Usage: "l", Default: 42.0}}),
+			want:     `string default 42 is not a string`,
+		},
+		{
+			name:     "repeat default as a scalar",
+			commands: leaf(map[string]FlagSchema{"t": {Kind: "repeat", Usage: "t", Default: "x"}}),
+			want:     `repeat default x is not an array`,
+		},
+		{
+			name:     "out-of-range integer default",
+			commands: leaf(map[string]FlagSchema{"n": {Kind: "integer", Usage: "n", Default: 1.18e21}}),
+			want:     `integer default 1.18e+21 is out of int range`,
+		},
+		{
+			name:     "numeric duration default is rejected",
+			commands: leaf(map[string]FlagSchema{"d": {Kind: "duration", Usage: "d", Default: 5.0}}),
+			want:     `duration default 5 is neither a duration string nor a number`,
+		},
+		{
+			name:     "fractional integer default",
+			commands: leaf(map[string]FlagSchema{"n": {Kind: "integer", Usage: "n", Default: 3.5}}),
+			want:     `integer default 3.5 is not a whole number`,
+		},
+		{
+			name:     "unknown kind",
+			commands: leaf(map[string]FlagSchema{"n": {Kind: "float", Usage: "n", Default: 1.0}}),
+			want:     `unknown kind "float"`,
+		},
+		{
+			name: "leaf without help short",
+			commands: map[string]CommandSchema{
+				"probe": {Use: "probe", Output: &Output{Mode: OutputJSON, SuccessExitCodes: []int{0}}},
+			},
+			want: `command "probe" has no help short`,
+		},
+		{
+			name: "parent declares rules",
+			commands: map[string]CommandSchema{
+				"store": {
+					Short:        "store utilities",
+					Use:          "store",
+					Availability: []Rule{{Type: "enabledWhen", Reason: "the profile is read-only"}},
+					Subcommands: map[string]CommandSchema{
+						"path": {Short: "print the path", Use: "path"},
+					},
+				},
+			},
+			want: `command "store" declares rules but owns subcommands`,
+		},
+		{
+			name: "parent declares only success codes",
+			commands: map[string]CommandSchema{
+				"store": {
+					Short:  "store utilities",
+					Use:    "store",
+					Output: &Output{SuccessExitCodes: []int{0}},
+					Subcommands: map[string]CommandSchema{
+						"path": {Short: "print the path", Use: "path"},
+					},
+				},
+			},
+			want: `command "store" declares output, but only a leaf command can`,
+		},
+		{
+			name: "leaf mode without success codes",
+			commands: map[string]CommandSchema{
+				"probe": {Short: "run one probe", Use: "probe", Output: &Output{Mode: OutputJSON}},
+			},
+			want: `command "probe" declares output mode "json" without success exit codes`,
+		},
+		{
+			name: "parent declares positionals",
+			commands: map[string]CommandSchema{
+				"store": {
+					Short:       "store utilities",
+					Use:         "store [DIR]",
+					URL:         false,
+					Positionals: []Positional{{Name: "DIR"}},
+					Subcommands: map[string]CommandSchema{
+						"path": {Short: "print the path", Use: "path", Output: &Output{Mode: OutputJSON, SuccessExitCodes: []int{0}}},
+					},
+				},
+			},
+			want: `command "store" owns subcommands and declares positionals`,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			doc := &SchemaDocument{Schema: "test/cli-schema/v1", Name: "fixture", Commands: tc.commands}
+			_, err := doc.App(map[string]HandleFunc{
+				"probe":      handle,
+				"store path": handle,
+			})
+			if err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("err = %v, want it to contain %q", err, tc.want)
 			}
 		})
 	}

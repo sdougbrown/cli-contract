@@ -54,8 +54,8 @@ type manifestShape struct {
 // local to this package — the wire contract must not move when the
 // declaration structs change.
 type availabilityShape struct {
-	Conditions map[string]conditionShape `json:"conditions,omitempty"`
-	Rules      []ruleShape               `json:"rules,omitempty"`
+	Conditions map[string]clicontract.ConditionSchema `json:"conditions,omitempty"`
+	Rules      []ruleShape                            `json:"rules,omitempty"`
 }
 
 // ruleShape mirrors one Umpire availability rule on the wire.
@@ -133,12 +133,6 @@ func exprShapeFrom(expr *clicontract.Expr) exprShape {
 	return out
 }
 
-// conditionShape is one declared availability input.
-type conditionShape struct {
-	Type        string `json:"type"`
-	Description string `json:"description,omitempty"`
-}
-
 type toolShape struct {
 	Description string         `json:"description"`
 	Command     []string       `json:"command"`
@@ -164,11 +158,8 @@ func Manifest(app *clicontract.App, opts Options) ([]byte, error) {
 	var walk func(path []string, cmd *clicontract.Command) error
 	walk = func(path []string, cmd *clicontract.Command) error {
 		if len(cmd.Subcommands) > 0 {
-			if len(cmd.Availability) > 0 || len(cmd.InputRules) > 0 {
-				return fmt.Errorf(
-					"command %q declares rules but owns subcommands; only leaf commands run as tools",
-					strings.Join(path, " "),
-				)
+			if err := clicontract.ValidateLeafOnly(strings.Join(path, " "), cmd); err != nil {
+				return err
 			}
 			if err := cmd.ValidateOutput(strings.Join(path, " ")); err != nil {
 				return err
@@ -211,9 +202,9 @@ func Manifest(app *clicontract.App, opts Options) ([]byte, error) {
 	}
 	var availability *availabilityShape
 	if len(app.AvailabilityConditions) > 0 || len(rules) > 0 {
-		conditions := make(map[string]conditionShape, len(app.AvailabilityConditions))
+		conditions := make(map[string]clicontract.ConditionSchema, len(app.AvailabilityConditions))
 		for _, c := range app.AvailabilityConditions {
-			conditions[c.Name] = conditionShape{Type: c.Type, Description: c.Description}
+			conditions[c.Name] = clicontract.ConditionSchema{Type: c.Type, Description: c.Description}
 		}
 		shapes := make([]ruleShape, 0, len(rules))
 		for _, rule := range rules {
@@ -441,16 +432,15 @@ func buildTool(opts Options, timeout string, appName string, path []string, cmd 
 		inputSchema["required"] = required
 	}
 
-	// The declared output block wins; a command that declares none keeps the
-	// envelope-carrying default this bridge has always written.
-	output := manifestOutput(cmd.Output)
-
 	if err := validateInputRuleSubjects(full, cmd.InputRules, props); err != nil {
 		return toolShape{}, err
 	}
 	if err := cmd.ValidateOutput(full); err != nil {
 		return toolShape{}, err
 	}
+	// The declared output block wins; a command that declares none keeps the
+	// envelope-carrying default this bridge has always written.
+	output := manifestOutput(cmd.Output)
 
 	return toolShape{
 		Description: cmd.Short,
@@ -466,8 +456,11 @@ func buildTool(opts Options, timeout string, appName string, path []string, cmd 
 // manifestOutput renders one command's output block for a manifest. The
 // manifest's vocabulary predates this declaration: it spells a pointered JSON
 // result "json-pointer" and has no "none", so those two translate here, in the
-// one place that speaks both. An undeclared command keeps the envelope-carrying
-// default: the envelope stays authoritative, so every documented code decodes.
+// one place that speaks both. The cost of the missing "none": a none command
+// and a raw command render the same "raw" mode, and a consumer cannot tell
+// them apart — coordinating a "none" mode with the cli-registry spec is the
+// spec-level fix. An undeclared command keeps the envelope-carrying default:
+// the envelope stays authoritative, so every documented code decodes.
 // A declared command renders exactly what it stated: buildTool validated the
 // block, so a declared mode always carries its success codes.
 func manifestOutput(o clicontract.Output) map[string]any {
