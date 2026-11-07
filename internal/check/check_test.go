@@ -1,7 +1,9 @@
 package check
 
 import (
+	"os"
 	"os/exec"
+	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
@@ -108,6 +110,31 @@ func TestLoadDocumentTimesOut(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "timed out") {
 		t.Errorf("error = %q, want a timeout explanation", err)
+	}
+}
+
+// TestLoadDocumentReportsStderr pins the failure diagnostic: when the schema
+// command exits non-zero, its stderr must reach the error message so the user
+// can tell why the document could not be read.
+func TestLoadDocumentReportsStderr(t *testing.T) {
+	sh, err := exec.LookPath("sh")
+	if err != nil {
+		t.Skip("no sh(1) on this platform")
+	}
+	const diagnostic = "schema: cannot render the document"
+	script := filepath.Join(t.TempDir(), "fail.sh")
+	if err := os.WriteFile(script, []byte("printf '%s\\n' '"+diagnostic+"' >&2; exit 3\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	_, err = loadDocument([]string{sh, script}, "", "", time.Second)
+	if err == nil {
+		t.Fatal("a failing schema command produced no error")
+	}
+	if !strings.Contains(err.Error(), diagnostic) {
+		t.Errorf("error = %q, want the command's stderr", err)
+	}
+	if !strings.Contains(err.Error(), "exited 3") {
+		t.Errorf("error = %q, want the observed exit code", err)
 	}
 }
 

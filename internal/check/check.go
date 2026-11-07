@@ -236,14 +236,17 @@ func loadDocument(target []string, schemaFile, schemaCommand string, timeout tim
 	argv := append(append([]string{}, target...), schemaCommand)
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
-	out, err := exec.CommandContext(ctx, argv[0], argv[1:]...).Output()
+	cmd := exec.CommandContext(ctx, argv[0], argv[1:]...)
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
+	out, err := cmd.Output()
 	if ctx.Err() == context.DeadlineExceeded {
 		return nil, fmt.Errorf("check: %s timed out after %s", strings.Join(argv, " "), timeout)
 	}
 	if err != nil {
 		var exit *exec.ExitError
 		if errors.As(err, &exit) {
-			return nil, fmt.Errorf("check: %s exited %d: %s", strings.Join(argv, " "), exit.ExitCode(), strings.TrimSpace(string(exit.Stderr)))
+			return nil, fmt.Errorf("check: %s exited %d: %s", strings.Join(argv, " "), exit.ExitCode(), strings.TrimSpace(stderr.String()))
 		}
 		return nil, fmt.Errorf("check: run %s: %w", strings.Join(argv, " "), err)
 	}

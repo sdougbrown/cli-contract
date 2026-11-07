@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"testing"
 
 	"github.com/sdougbrown/cli-contract"
@@ -42,6 +43,37 @@ func runChecker(t *testing.T, bin string, argv ...string) (int, check.Report) {
 		t.Fatalf("decode report (%q): %v", out, err)
 	}
 	return code, report
+}
+
+// buildFixture builds the stub target the schema-command tests run against.
+func buildFixture(t *testing.T) string {
+	t.Helper()
+	bin := filepath.Join(t.TempDir(), "fixture")
+	cmd := exec.Command("go", "build", "-o", bin, "./testdata/fixture")
+	cmd.Stderr = os.Stderr
+	if err := cmd.Run(); err != nil {
+		t.Fatalf("build fixture: %v", err)
+	}
+	return bin
+}
+
+// writeTargetDocument writes the hand-written document the tests that read it
+// from a file load, and returns its path.
+func writeTargetDocument(t *testing.T) string {
+	t.Helper()
+	doc := filepath.Join(t.TempDir(), "schema.json")
+	document := `{
+	  "schema": "cli-contract/cli-schema/v1",
+	  "name": "target",
+	  "commands": {
+	    "only": {"short": "do one thing", "use": "only", "url_positional": false}
+	  },
+	  "common_flags": {}
+	}`
+	if err := os.WriteFile(doc, []byte(document), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	return doc
 }
 
 // TestAdapterErrorCodes pins the envelope split the reference adapters use:
@@ -86,6 +118,52 @@ func TestCheckItself(t *testing.T) {
 			}
 		}
 		t.Fatalf("exit = %d, ok = %t: the checker does not conform to its own spec", code, report.OK)
+	}
+	if len(report.Cases) == 0 {
+		t.Fatal("the checker derived no cases")
+	}
+}
+
+// TestCheckKeepsEveryPositional pins the variadic TARGET: the binary plus its
+// fixed arguments form the target, so a second positional must reach both the
+// report and every invocation.
+func TestCheckKeepsEveryPositional(t *testing.T) {
+	if testing.Short() {
+		t.Skip("builds a binary")
+	}
+	bin := buildChecker(t)
+	target := buildFixture(t)
+
+	code, report := runChecker(t, bin, "check", "--schema-file", writeTargetDocument(t), target, "extra")
+	if code != 0 || !report.OK {
+		t.Fatalf("exit = %d, ok = %t: the target with a fixed argument did not pass", code, report.OK)
+	}
+	want := []string{target, "extra"}
+	if !slices.Equal(report.Target, want) {
+		t.Fatalf("target = %v, want %v", report.Target, want)
+	}
+}
+
+// TestCheckForwardsSchemaCommand pins the flag's forwarding: the document must
+// come from the nominated subcommand, not the hardcoded default.
+func TestCheckForwardsSchemaCommand(t *testing.T) {
+	if testing.Short() {
+		t.Skip("builds a binary")
+	}
+	bin := buildChecker(t)
+	target := buildFixture(t)
+
+	code, report := runChecker(t, bin, "check", "--schema-command", "dump-schema", target)
+	if code != 0 || !report.OK {
+		for _, c := range report.Cases {
+			if !c.OK {
+				t.Errorf("%s (%v): %s", c.ID, c.Argv, c.Detail)
+			}
+		}
+		t.Fatalf("exit = %d, ok = %t: the check did not run through dump-schema", code, report.OK)
+	}
+	if report.Schema != clicontract.SchemaDocumentV1 {
+		t.Errorf("schema = %q, want %q", report.Schema, clicontract.SchemaDocumentV1)
 	}
 	if len(report.Cases) == 0 {
 		t.Fatal("the checker derived no cases")
