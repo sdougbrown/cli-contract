@@ -66,9 +66,10 @@ type Positional struct {
 	Variadic bool   `json:"variadic,omitempty"`
 }
 
-// OutputMode names how a command writes stdout: one JSON value, raw bytes,
-// or nothing. The names match the cli-registry manifest's output.mode, so a
-// generated manifest can carry the declaration unchanged.
+// OutputMode names how one command writes stdout: one JSON value, raw bytes,
+// or nothing. "json" and "raw" match the cli-registry manifest's output.mode;
+// the registry bridge translates "none" (nothing to decode) and a pointered
+// JSON value ("json-pointer") into the manifest's vocabulary.
 type OutputMode string
 
 const (

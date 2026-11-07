@@ -152,6 +152,18 @@ func TestSchemaDocumentJSONShape(t *testing.T) {
 	if _, ok := doc["handler_owned_signals"]; ok {
 		t.Error("document declares handler_owned_signals for an app that did not")
 	}
+	app.CommonFlags = nil
+	b, err = json.Marshal(app.SchemaDocument())
+	if err != nil {
+		t.Fatal(err)
+	}
+	var noCommon map[string]any
+	if err := json.Unmarshal(b, &noCommon); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := noCommon["common_flags"]; ok {
+		t.Errorf("app with no common flags renders common_flags: %v", noCommon["common_flags"])
+	}
 
 	commands, ok := doc["commands"].(map[string]any)
 	if !ok {

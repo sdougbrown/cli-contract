@@ -26,7 +26,7 @@ type SchemaDocument struct {
 	Name                string                     `json:"name,omitempty"`
 	Version             string                     `json:"version,omitempty"`
 	Commands            map[string]CommandSchema   `json:"commands"`
-	CommonFlags         map[string]FlagSchema      `json:"common_flags"`
+	CommonFlags         map[string]FlagSchema      `json:"common_flags,omitempty"`
 	Conditions          map[string]ConditionSchema `json:"conditions,omitempty"`
 	Signals             map[string]int             `json:"signals,omitempty"`
 	HandlerOwnedSignals bool                       `json:"handler_owned_signals,omitempty"`
