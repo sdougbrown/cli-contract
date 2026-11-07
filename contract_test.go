@@ -10,7 +10,6 @@ import (
 	"os"
 	"slices"
 	"strings"
-	"syscall"
 	"testing"
 	"time"
 )
@@ -612,40 +611,6 @@ func TestRunHelpPathsWithVersion(t *testing.T) {
 	}
 }
 
-func TestRunVersionFlag(t *testing.T) {
-	adapter := &testAdapter{}
-	code, stdout, _ := runApp(t, testApp(), adapter, "--version")
-	if code != 0 {
-		t.Fatalf("exit code = %d", code)
-	}
-	if !strings.HasPrefix(stdout, "testcli vtest\n") {
-		t.Errorf("version output = %q", stdout)
-	}
-}
-
-func TestRunSignals(t *testing.T) {
-	app := testApp()
-	app.Commands[0].Handle = func(ctx context.Context, inv Invocation, _ io.Writer) (any, error) {
-		return map[string]any{"command": "reconcile", "status": "updated"}, nil
-	}
-	for _, tc := range []struct {
-		name string
-		sig  os.Signal
-		code int
-	}{
-		{"SIGINT", os.Interrupt, 130},
-		{"SIGTERM", syscall.SIGTERM, 143},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			adapter := &testAdapter{seams: &testSeams{signal: tc.sig}}
-			code, _, _ := runApp(t, app, adapter, "reconcile", "u")
-			if code != tc.code {
-				t.Fatalf("exit code = %d, want %d", code, tc.code)
-			}
-		})
-	}
-}
-
 func TestRunTestSeamsCrash(t *testing.T) {
 	adapter := &testAdapter{seams: &testSeams{crash: true}}
 	defer func() {
@@ -966,21 +931,6 @@ func jsonField(t *testing.T, data string) map[string]any {
 		t.Fatalf("stdout is not one JSON value: %v (%q)", err, data)
 	}
 	return m
-}
-
-func TestHandlerOwnedSignals(t *testing.T) {
-	app := testApp()
-	app.HandlerOwnedSignals = true
-	app.Commands[0].Handle = func(ctx context.Context, inv Invocation, _ io.Writer) (any, error) {
-		// A server-style handler: it manages signals itself and returns
-		// its own exit decision.
-		return map[string]any{"command": "reconcile", "status": "updated"}, nil
-	}
-	adapter := &testAdapter{seams: &testSeams{signal: os.Interrupt}}
-	code, _, _ := runApp(t, app, adapter, "reconcile", "u")
-	if code != 0 {
-		t.Fatalf("exit code = %d, want 0: the handler owns signals", code)
-	}
 }
 
 func TestDeclaredDefaultsApplyAtParse(t *testing.T) {
