@@ -39,6 +39,15 @@ func SignalExitCode(sig os.Signal) int {
 	}
 }
 
+// SignalExitCodes renders the library's signal convention as data, keyed by
+// the signal name a schema document carries.
+func SignalExitCodes() map[string]int {
+	return map[string]int{
+		"SIGINT":  SignalExitCode(os.Interrupt),
+		"SIGTERM": SignalExitCode(syscall.SIGTERM),
+	}
+}
+
 // Adapter is the app's result vocabulary. The library routes invocations and
 // caller errors; the adapter formats results, writes them, and derives exit
 // codes.

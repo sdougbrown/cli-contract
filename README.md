@@ -189,16 +189,37 @@ Optional extensions:
 ## Schema
 
 ```go
+doc := app.SchemaDocument()     // the whole document, ready to encode
 schemas := app.Schemas()        // map[command name]CommandSchema
 common := app.CommonFlagSchemas()
 ```
 
-`CommandSchema` and `FlagSchema` render the declared surface as JSON-ready
-data: names, Use strings, URL positionals, flag kinds (`string`/`bool`/
-`repeat`), usage strings, defaults, and declared shorthands (`short`, omitted
-when a flag has none). Compose the app's own contract facts
-around them (statuses, error codes, envelope fields) into the document your
-harnesses parse.
+`SchemaDocument` renders the declared surface as one document: the command
+entries, the common flags, the availability conditions, and the signal
+convention the library owns. `CommandSchema` and `FlagSchema` carry names,
+help text, structured positionals, Use strings, URL positionals, single-dash
+behavior, flag kinds (`string`/`bool`/`repeat`/`integer`/`duration`), usage
+strings, defaults, declared shorthands (`short`, omitted when a flag has
+none), input and availability rules, and the output declaration. Compose the
+app's own facts (statuses, error codes, envelope fields, named exit codes)
+around it before encoding.
+
+### Output declaration
+
+`Command.Output` states how one leaf command's stdout is decoded and which
+exit codes mean success:
+
+```go
+Output: clicontract.Output{
+    Mode:             clicontract.OutputJSON, // json | raw | none
+    SuccessExitCodes: []int{0, 3},
+},
+```
+
+The [registry](registry/registry.go) bridge copies the declaration into a
+manifest's `output` block instead of guessing it. It translates a JSON pointer
+to the manifest's `json-pointer` mode and `none` to `raw`, since a command
+that writes nothing has nothing to decode.
 
 ## Availability
 

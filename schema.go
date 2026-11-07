@@ -1,8 +1,9 @@
 package clicontract
 
 // The schema derivation: one rendering of the declared command surface for
-// machine consumers. The app composes its full contract document around
-// these pieces (statuses, error codes, and envelope fields are app facts).
+// machine consumers. SchemaDocument wraps these entries into the document the
+// cli-contract spec describes; statuses, error codes, and envelope fields stay
+// app facts.
 
 // FlagSchema describes one flag as data: the value kind, the declared
 // shorthand, the usage string, the default (the flag's zero value unless the
@@ -15,16 +16,27 @@ type FlagSchema struct {
 	Required bool   `json:"required,omitempty"`
 }
 
-// CommandSchema describes one command as data: its help short, its Use
-// string, whether it takes a URL positional, its flags, its input rules, and
-// (for nested commands) its subcommands.
+// CommandSchema describes one command as data: its help short and long, its
+// Use string, its positionals, whether it takes a URL positional, its flags,
+// its input and availability rules, its output declaration, and (for nested
+// commands) its subcommands.
+//
+// Use renders the same positionals in help form; Positionals is the
+// authoritative list and a reader that rebuilds a declaration reads it, not
+// Use. A command that owns subcommands keeps its persistent flags under Flags
+// and declares no positionals of its own.
 type CommandSchema struct {
-	Short       string                   `json:"short"`
-	Use         string                   `json:"use"`
-	URL         bool                     `json:"url_positional"`
-	Flags       map[string]FlagSchema    `json:"flags,omitempty"`
-	InputRules  []Rule                   `json:"inputRules,omitempty"`
-	Subcommands map[string]CommandSchema `json:"subcommands,omitempty"`
+	Short          string                   `json:"short"`
+	Long           string                   `json:"long,omitempty"`
+	Use            string                   `json:"use"`
+	Positionals    []Positional             `json:"positionals,omitempty"`
+	URL            bool                     `json:"url_positional"`
+	NoInterspersed bool                     `json:"no_interspersed,omitempty"`
+	Flags          map[string]FlagSchema    `json:"flags,omitempty"`
+	InputRules     []Rule                   `json:"inputRules,omitempty"`
+	Availability   []Rule                   `json:"availability,omitempty"`
+	Output         *Output                  `json:"output,omitempty"`
+	Subcommands    map[string]CommandSchema `json:"subcommands,omitempty"`
 }
 
 // hasURLPositional reports whether the command takes exactly one required
@@ -96,18 +108,40 @@ func ruleValues(rules []*Rule) []Rule {
 	return out
 }
 
+// outputValue renders one command's output declaration, copying it so the
+// document stays detached from the declaration. The zero value renders as
+// absent rather than an empty mode.
+func outputValue(o Output) *Output {
+	if o.Mode == "" {
+		return nil
+	}
+	out := o
+	out.SuccessExitCodes = append([]int(nil), o.SuccessExitCodes...)
+	return &out
+}
+
 // Schema renders one command's schema entry, nested subcommands included.
 func (c *Command) Schema() CommandSchema {
 	entry := CommandSchema{
-		Short:      c.Short,
-		Use:        commandUse(c),
-		URL:        hasURLPositional(c),
-		Flags:      flagsSchema(c.Flags),
-		InputRules: ruleValues(c.InputRules),
+		Short:          c.Short,
+		Long:           c.Long,
+		Use:            commandUse(c),
+		Positionals:    append([]Positional(nil), c.Positionals...),
+		URL:            hasURLPositional(c),
+		NoInterspersed: c.NoInterspersed,
+		Flags:          flagsSchema(c.Flags),
+		InputRules:     ruleValues(c.InputRules),
+		Availability:   ruleValues(c.Availability),
+		Output:         outputValue(c.Output),
 	}
 	if len(c.Subcommands) > 0 {
+		// A parent parses only its persistent flags and runs no leaf
+		// contract of its own.
 		entry.URL = false
 		entry.Flags = nil
+		entry.Positionals = nil
+		entry.NoInterspersed = false
+		entry.Output = nil
 		if len(c.PersistentFlags) > 0 {
 			// Subcommands inherit these; the parent's entry is where
 			// consumers look for them.

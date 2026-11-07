@@ -61,9 +61,37 @@ type Flag struct {
 // as <name> in help and must be present; optional ones render as [name]. A
 // variadic positional (the last one) absorbs any remaining arguments.
 type Positional struct {
-	Name     string
-	Required bool
-	Variadic bool
+	Name     string `json:"name"`
+	Required bool   `json:"required,omitempty"`
+	Variadic bool   `json:"variadic,omitempty"`
+}
+
+// OutputMode names how a command writes stdout: one JSON value, raw bytes,
+// or nothing. The names match the cli-registry manifest's output.mode, so a
+// generated manifest can carry the declaration unchanged.
+type OutputMode string
+
+const (
+	// OutputJSON writes exactly one JSON value on stdout.
+	OutputJSON OutputMode = "json"
+	// OutputRaw writes bytes the consumer does not decode as JSON.
+	OutputRaw OutputMode = "raw"
+	// OutputNone writes nothing; the exit code is the whole result.
+	OutputNone OutputMode = "none"
+)
+
+// Output declares how one command's output is decoded and which exit codes
+// mean success. The zero value declares nothing. Mode is required once any
+// other member is set, and only a leaf command may declare it.
+type Output struct {
+	Mode OutputMode `json:"mode"`
+	// JSONPointer is the location of the command's result inside the JSON
+	// value, for consumers that present a field rather than the envelope.
+	// Empty means the value itself is the result.
+	JSONPointer string `json:"json_pointer,omitempty"`
+	// SuccessExitCodes lists the exit codes that mean success. Empty means
+	// the spec's default: 0.
+	SuccessExitCodes []int `json:"success_exit_codes,omitempty"`
 }
 
 // Invocation carries one parsed command invocation.
@@ -144,6 +172,9 @@ type Command struct {
 	// this command parses. Only leaf commands can declare them. A rule's
 	// Field and Targets name flag names.
 	InputRules []*Rule
+	// Output declares how the command's stdout is decoded and which exit
+	// codes mean success. Only leaf commands can declare it.
+	Output Output
 	// Handle runs the command and returns the result the adapter writes.
 	Handle HandleFunc
 	// Raw writes directly to stdout.
@@ -267,6 +298,9 @@ func validateCommand(path string, c *Command, inherited []surfaceFlag, common []
 			return err
 		}
 	}
+	if err := c.ValidateOutput(path); err != nil {
+		return err
+	}
 	// The builder registers a command's persistent flags only when the
 	// command owns subcommands, and its plain flags only on a leaf; the
 	// other list never reaches a flag set.
@@ -308,6 +342,55 @@ func declaresHelp(inherited []surfaceFlag, flags []Flag) bool {
 		}
 	}
 	return false
+}
+
+// ValidateOutput checks one command's output declaration. Only a leaf writes
+// output of its own, so a command with subcommands cannot declare one. The
+// optional members widen a mode rather than standing alone: a pointer or a
+// success-code list without a mode leaves the consumer unable to decode the
+// command.
+//
+// Run, Parse, and Tree reach it through validate; the registry manifest checks
+// it directly, since it renders the declaration without building a tree.
+func (c *Command) ValidateOutput(path string) error {
+	o := c.Output
+	declared := o.Mode != "" || o.JSONPointer != "" || len(o.SuccessExitCodes) > 0
+	if len(c.Subcommands) > 0 {
+		if declared {
+			return UsageErrorf("command %q declares output, but only a leaf command can", path)
+		}
+		return nil
+	}
+	if o.Mode == "" {
+		if o.JSONPointer != "" || len(o.SuccessExitCodes) > 0 {
+			return UsageErrorf("command %q declares output details without a mode", path)
+		}
+		return nil
+	}
+	switch o.Mode {
+	case OutputJSON, OutputRaw, OutputNone:
+	default:
+		return UsageErrorf("command %q output mode %q, want %q, %q, or %q", path, o.Mode, OutputJSON, OutputRaw, OutputNone)
+	}
+	if o.JSONPointer != "" {
+		if o.Mode != OutputJSON {
+			return UsageErrorf("command %q declares a json pointer with output mode %q", path, o.Mode)
+		}
+		if !strings.HasPrefix(o.JSONPointer, "/") {
+			return UsageErrorf("command %q json pointer %q, want a path starting with /", path, o.JSONPointer)
+		}
+	}
+	seen := make(map[int]bool, len(o.SuccessExitCodes))
+	for _, code := range o.SuccessExitCodes {
+		if code < 0 {
+			return UsageErrorf("command %q declares success exit code %d, want a non-negative code", path, code)
+		}
+		if seen[code] {
+			return UsageErrorf("command %q declares success exit code %d twice", path, code)
+		}
+		seen[code] = true
+	}
+	return nil
 }
 
 // validateFlags checks one flag list the tree builder registers: named, known
