@@ -21,10 +21,14 @@ import (
 )
 
 // Timeouts bound one invocation. A target that hangs must fail the case, not
-// the checker: this runs untrusted binaries.
+// the checker: this runs untrusted binaries. The context deadline kills the
+// direct child, but that alone does not unblock Wait: a forked grandchild that
+// inherited stdout or stderr keeps the pipes open. pipeGrace caps the drain
+// that follows, so one invocation is bounded by its timeout plus this grace.
 const (
 	caseTimeout   = 10 * time.Second
 	schemaTimeout = 30 * time.Second
+	pipeGrace     = time.Second
 )
 
 // timedOutExit is the sentinel Got.Exit carries when the process was killed
@@ -163,6 +167,7 @@ func run(target []string, cases []Case, timeout time.Duration) ([]Result, error)
 		var stdout, stderr bytes.Buffer
 		cmd := exec.CommandContext(ctx, argv[0], argv[1:]...)
 		cmd.Stdout, cmd.Stderr = &stdout, &stderr
+		cmd.WaitDelay = pipeGrace
 		err := cmd.Run()
 		timedOut := ctx.Err() == context.DeadlineExceeded
 		cancel()
@@ -239,6 +244,7 @@ func loadDocument(target []string, schemaFile, schemaCommand string, timeout tim
 	cmd := exec.CommandContext(ctx, argv[0], argv[1:]...)
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr
+	cmd.WaitDelay = pipeGrace
 	out, err := cmd.Output()
 	if ctx.Err() == context.DeadlineExceeded {
 		return nil, fmt.Errorf("check: %s timed out after %s", strings.Join(argv, " "), timeout)

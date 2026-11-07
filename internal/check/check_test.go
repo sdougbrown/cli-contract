@@ -96,6 +96,42 @@ func TestRunTimesOut(t *testing.T) {
 	}
 }
 
+// TestRunTimesOutForkedChild pins the fork path: the deadline kills only the
+// direct child, so a backgrounded grandchild holding the inherited pipes must
+// not keep the checker blocked long past it.
+func TestRunTimesOutForkedChild(t *testing.T) {
+	sh, err := exec.LookPath("sh")
+	if err != nil {
+		t.Skip("no sh(1) on this platform")
+	}
+	if _, err := exec.LookPath("sleep"); err != nil {
+		t.Skip("no sleep(1) on this platform")
+	}
+	cases := []Case{{ID: "fork:root", Argv: []string{"-c", "sleep 5 & exit 0"}, Want: Want{Exit: 0}}}
+	start := time.Now()
+	results, err := run([]string{sh}, cases, 100*time.Millisecond)
+	elapsed := time.Since(start)
+	if err != nil {
+		t.Fatalf("run: %v", err)
+	}
+	if elapsed >= 4*time.Second {
+		t.Errorf("run took %s with a forked child holding the pipes; want well under the child's 5s", elapsed)
+	}
+	if len(results) != 1 {
+		t.Fatalf("run returned %d results, want 1", len(results))
+	}
+	got := results[0]
+	if got.OK {
+		t.Error("a case whose pipes outlived the deadline passed")
+	}
+	if got.Got.Exit != timedOutExit {
+		t.Errorf("exit = %d, want %d: a case cut off at the deadline observed no exit", got.Got.Exit, timedOutExit)
+	}
+	if !strings.Contains(got.Detail, "timed out") {
+		t.Errorf("detail = %q, want a timeout explanation", got.Detail)
+	}
+}
+
 // TestLoadDocumentTimesOut pins the schema-command hang path: a command
 // killed at the deadline has no observed exit, so the error must say it timed
 // out rather than report a made-up exit code.
