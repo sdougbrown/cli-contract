@@ -31,12 +31,13 @@ func schemaDocumentApp() *App {
 				Positionals:    []Positional{{Name: "URL", Required: true}},
 				NoInterspersed: true,
 				Flags:          []Flag{{Name: "depth", Kind: Int, Usage: "fetch depth", Default: 3}},
-				Output:         Output{Mode: OutputJSON, SuccessExitCodes: []int{0}},
+				Output:         Output{Mode: OutputJSON, JSONPointer: "/item", SuccessExitCodes: []int{0}},
 				Handle:         handle,
 			},
 			{
-				Name:  "edit",
-				Short: "edit a thing",
+				Name:        "edit",
+				Short:       "edit a thing",
+				Positionals: []Positional{{Name: "files", Variadic: true}},
 				Availability: []*Rule{
 					Enabled(Not(When("read_only")), "the profile is read-only"),
 				},
@@ -85,6 +86,9 @@ func TestSchemaDocumentRendersTheSurface(t *testing.T) {
 	edit := doc.Commands["edit"]
 	if len(edit.Availability) != 1 || edit.Availability[0].Type != "enabledWhen" {
 		t.Errorf("edit availability = %+v", edit.Availability)
+	}
+	if len(edit.Positionals) != 1 || edit.Positionals[0].Name != "files" || !edit.Positionals[0].Variadic {
+		t.Errorf("edit positionals = %+v", edit.Positionals)
 	}
 	if edit.Output == nil || edit.Output.Mode != OutputRaw || !reflect.DeepEqual(edit.Output.SuccessExitCodes, []int{0}) {
 		t.Errorf("edit output = %+v", edit.Output)
@@ -142,6 +146,9 @@ func TestSchemaDocumentJSONShape(t *testing.T) {
 			t.Errorf("document has no %q key", key)
 		}
 	}
+	if doc["schema"] != "cli-contract/cli-schema/v1" {
+		t.Errorf("schema id = %v, want the v1 identifier literal", doc["schema"])
+	}
 	if _, ok := doc["handler_owned_signals"]; ok {
 		t.Error("document declares handler_owned_signals for an app that did not")
 	}
@@ -169,11 +176,39 @@ func TestSchemaDocumentJSONShape(t *testing.T) {
 	if _, ok := edit["availability"]; !ok {
 		t.Error("commands.edit has no \"availability\" key")
 	}
+	positionals, ok := fetch["positionals"].([]any)
+	if !ok || len(positionals) != 1 {
+		t.Fatalf("commands.fetch positionals = %#v", fetch["positionals"])
+	}
+	urlPos, ok := positionals[0].(map[string]any)
+	if !ok {
+		t.Fatal("commands.fetch.positionals[0] is not an object")
+	}
+	if urlPos["name"] != "URL" || urlPos["required"] != true {
+		t.Errorf("commands.fetch.positionals[0] = %#v, want name URL, required true", urlPos)
+	}
+	if _, ok := urlPos["variadic"]; ok {
+		t.Error("commands.fetch.positionals[0] renders variadic on a non-variadic positional")
+	}
+	editPositionals, ok := edit["positionals"].([]any)
+	if !ok || len(editPositionals) != 1 {
+		t.Fatalf("commands.edit positionals = %#v", edit["positionals"])
+	}
+	files, ok := editPositionals[0].(map[string]any)
+	if !ok {
+		t.Fatal("commands.edit.positionals[0] is not an object")
+	}
+	if files["name"] != "files" || files["variadic"] != true {
+		t.Errorf("commands.edit.positionals[0] = %#v, want name files, variadic true", files)
+	}
+	if _, ok := files["required"]; ok {
+		t.Error("commands.edit.positionals[0] renders required on an optional positional")
+	}
 	output, ok := fetch["output"].(map[string]any)
 	if !ok {
 		t.Fatal("commands.fetch.output is not an object")
 	}
-	for _, key := range []string{"mode", "success_exit_codes"} {
+	for _, key := range []string{"mode", "json_pointer", "success_exit_codes"} {
 		if _, ok := output[key]; !ok {
 			t.Errorf("commands.fetch.output has no %q key", key)
 		}
