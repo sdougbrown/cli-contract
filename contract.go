@@ -389,6 +389,9 @@ func (c *Command) ValidateOutput(path string) error {
 		if code < 0 {
 			return UsageErrorf("command %q declares success exit code %d, want a non-negative code", path, code)
 		}
+		if code > 255 {
+			return UsageErrorf("command %q declares success exit code %d, want a code in [0, 255]", path, code)
+		}
 		if seen[code] {
 			return UsageErrorf("command %q declares success exit code %d twice", path, code)
 		}

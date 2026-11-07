@@ -66,63 +66,71 @@ func TestSchemaDocumentRendersTheSurface(t *testing.T) {
 		t.Errorf("document header = %+v", doc)
 	}
 
-	fetch := doc.Commands["fetch"]
-	if len(fetch.Positionals) != 1 || fetch.Positionals[0].Name != "URL" || !fetch.Positionals[0].Required {
-		t.Errorf("fetch positionals = %+v", fetch.Positionals)
-	}
-	if !fetch.URL {
-		t.Error("fetch is not marked as taking a URL positional")
-	}
-	if !fetch.NoInterspersed {
-		t.Error("fetch lost its no_interspersed declaration")
-	}
-	if fetch.Long != "Fetch one resource and print it." {
-		t.Errorf("fetch long = %q", fetch.Long)
-	}
-	if fetch.Output == nil || fetch.Output.Mode != OutputJSON || !reflect.DeepEqual(fetch.Output.SuccessExitCodes, []int{0}) {
-		t.Errorf("fetch output = %+v", fetch.Output)
-	}
+	t.Run("fetch", func(t *testing.T) {
+		fetch := doc.Commands["fetch"]
+		if len(fetch.Positionals) != 1 || fetch.Positionals[0].Name != "URL" || !fetch.Positionals[0].Required {
+			t.Errorf("fetch positionals = %+v", fetch.Positionals)
+		}
+		if !fetch.URL {
+			t.Error("fetch is not marked as taking a URL positional")
+		}
+		if !fetch.NoInterspersed {
+			t.Error("fetch lost its no_interspersed declaration")
+		}
+		if fetch.Long != "Fetch one resource and print it." {
+			t.Errorf("fetch long = %q", fetch.Long)
+		}
+		if fetch.Output == nil || fetch.Output.Mode != OutputJSON || !reflect.DeepEqual(fetch.Output.SuccessExitCodes, []int{0}) {
+			t.Errorf("fetch output = %+v", fetch.Output)
+		}
+	})
 
-	edit := doc.Commands["edit"]
-	if len(edit.Availability) != 1 || edit.Availability[0].Type != "enabledWhen" {
-		t.Errorf("edit availability = %+v", edit.Availability)
-	}
-	if len(edit.Positionals) != 1 || edit.Positionals[0].Name != "files" || !edit.Positionals[0].Variadic {
-		t.Errorf("edit positionals = %+v", edit.Positionals)
-	}
-	if edit.Output == nil || edit.Output.Mode != OutputRaw || !reflect.DeepEqual(edit.Output.SuccessExitCodes, []int{0}) {
-		t.Errorf("edit output = %+v", edit.Output)
-	}
+	t.Run("edit", func(t *testing.T) {
+		edit := doc.Commands["edit"]
+		if len(edit.Availability) != 1 || edit.Availability[0].Type != "enabledWhen" {
+			t.Errorf("edit availability = %+v", edit.Availability)
+		}
+		if len(edit.Positionals) != 1 || edit.Positionals[0].Name != "files" || !edit.Positionals[0].Variadic {
+			t.Errorf("edit positionals = %+v", edit.Positionals)
+		}
+		if edit.Output == nil || edit.Output.Mode != OutputRaw || !reflect.DeepEqual(edit.Output.SuccessExitCodes, []int{0}) {
+			t.Errorf("edit output = %+v", edit.Output)
+		}
+	})
 
-	if path := doc.Commands["store"].Subcommands["path"]; path.Output != nil {
-		t.Errorf("store.path output = %+v, want none for a leaf that declares none", path.Output)
-	}
-	store := doc.Commands["store"]
-	if store.Output != nil {
-		t.Errorf("store output = %+v, want none on a command with subcommands", store.Output)
-	}
-	if store.Positionals != nil {
-		t.Errorf("store positionals = %+v, want none on a command with subcommands", store.Positionals)
-	}
-	if store.NoInterspersed {
-		t.Error("store renders no_interspersed on a command with subcommands")
-	}
-	if _, ok := store.Flags["store-dir"]; !ok {
-		t.Error("store's persistent flag is missing from its entry")
-	}
+	t.Run("store", func(t *testing.T) {
+		store := doc.Commands["store"]
+		if path := store.Subcommands["path"]; path.Output != nil {
+			t.Errorf("store.path output = %+v, want none for a leaf that declares none", path.Output)
+		}
+		if store.Output != nil {
+			t.Errorf("store output = %+v, want none on a command with subcommands", store.Output)
+		}
+		if store.Positionals != nil {
+			t.Errorf("store positionals = %+v, want none on a command with subcommands", store.Positionals)
+		}
+		if store.NoInterspersed {
+			t.Error("store renders no_interspersed on a command with subcommands")
+		}
+		if _, ok := store.Flags["store-dir"]; !ok {
+			t.Error("store's persistent flag is missing from its entry")
+		}
+	})
 
-	if got := doc.Conditions["read_only"]; got.Type != ConditionBoolean || got.Description == "" {
-		t.Errorf("read_only condition = %+v", got)
-	}
-	if doc.Signals["SIGINT"] != 130 || doc.Signals["SIGTERM"] != 143 {
-		t.Errorf("signals = %v", doc.Signals)
-	}
-	if doc.HandlerOwnedSignals {
-		t.Error("document claims handler-owned signals for an app that did not declare them")
-	}
-	if doc.ExitCodes != nil {
-		t.Errorf("exit codes = %v, want none: only the adapter knows them", doc.ExitCodes)
-	}
+	t.Run("app sections", func(t *testing.T) {
+		if got := doc.Conditions["read_only"]; got.Type != ConditionBoolean || got.Description == "" {
+			t.Errorf("read_only condition = %+v", got)
+		}
+		if doc.Signals["SIGINT"] != 130 || doc.Signals["SIGTERM"] != 143 {
+			t.Errorf("signals = %v", doc.Signals)
+		}
+		if doc.HandlerOwnedSignals {
+			t.Error("document claims handler-owned signals for an app that did not declare them")
+		}
+		if doc.ExitCodes != nil {
+			t.Errorf("exit codes = %v, want none: only the adapter knows them", doc.ExitCodes)
+		}
+	})
 }
 
 // TestSchemaDocumentJSONShape pins the wire names a consumer reads, not the Go
@@ -309,6 +317,11 @@ func TestValidateRejectsOutputDeclarations(t *testing.T) {
 			name: "mode without success codes",
 			cmd:  leaf(Output{Mode: OutputJSON}),
 			want: `command "probe" declares output mode "json" without success exit codes`,
+		},
+		{
+			name: "success code above 255",
+			cmd:  leaf(Output{Mode: OutputNone, SuccessExitCodes: []int{300}}),
+			want: `command "probe" declares success exit code 300, want a code in [0, 255]`,
 		},
 	}
 	for _, tc := range cases {
