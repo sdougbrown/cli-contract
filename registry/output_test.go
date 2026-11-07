@@ -71,6 +71,9 @@ func TestManifestOutputFollowsDeclaration(t *testing.T) {
 	if codes, ok := plain["success_exit_codes"].([]any); !ok || len(codes) != 1 || codes[0] != float64(0) {
 		t.Errorf("plain success codes = %v, want [0]", plain["success_exit_codes"])
 	}
+	if _, ok := plain["json_pointer"]; ok {
+		t.Errorf("plain json_pointer = %v, want absent for a pointer-less declaration", plain["json_pointer"])
+	}
 
 	field := outputOf(t, app, "testcli-field")
 	if field["mode"] != "json-pointer" || field["json_pointer"] != "/status" {
