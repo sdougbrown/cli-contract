@@ -326,8 +326,12 @@ func TestSchemaRendersInputRules(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if strings.Contains(string(b), "inputRules") {
-		t.Errorf("schema without rules should omit inputRules: %s", b)
+	var entry map[string]json.RawMessage
+	if err := json.Unmarshal(b, &entry); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := entry["input_rules"]; ok {
+		t.Errorf("schema without rules should omit input_rules: %s", b)
 	}
 }
 

@@ -2,6 +2,7 @@ package registry
 
 import (
 	"encoding/json"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -88,7 +89,7 @@ func TestManifestOutputFollowsDeclaration(t *testing.T) {
 		t.Errorf("undeclared mode = %v, want the envelope default", undeclared["mode"])
 	}
 	codes, ok := undeclared["success_exit_codes"].([]any)
-	if !ok || len(codes) != 5 {
+	if !ok || !reflect.DeepEqual(codes, []any{float64(0), float64(1), float64(2), float64(3), float64(4)}) {
 		t.Errorf("undeclared success codes = %v, want the envelope default [0 1 2 3 4]", undeclared["success_exit_codes"])
 	}
 }

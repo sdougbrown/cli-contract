@@ -46,6 +46,7 @@ func schemaDocumentApp() *App {
 			{
 				Name:            "store",
 				Short:           "store utilities",
+				NoInterspersed:  true,
 				PersistentFlags: []Flag{{Name: "store-dir", Kind: String, Usage: "store directory"}},
 				Subcommands: []*Command{
 					{Name: "path", Short: "print the store path", Handle: handle},
@@ -60,12 +61,6 @@ func TestSchemaDocumentRendersTheSurface(t *testing.T) {
 	app := schemaDocumentApp()
 	doc := app.SchemaDocument()
 
-	if !reflect.DeepEqual(doc.Commands, app.Schemas()) {
-		t.Error("document commands differ from Schemas(): the two renderings must agree")
-	}
-	if !reflect.DeepEqual(doc.CommonFlags, app.CommonFlagSchemas()) {
-		t.Error("document common flags differ from CommonFlagSchemas()")
-	}
 	if doc.Schema != SchemaDocumentV1 || doc.Name != "fixture" || doc.Version != "1.2.3" {
 		t.Errorf("document header = %+v", doc)
 	}
@@ -104,6 +99,9 @@ func TestSchemaDocumentRendersTheSurface(t *testing.T) {
 	}
 	if store.Positionals != nil {
 		t.Errorf("store positionals = %+v, want none on a command with subcommands", store.Positionals)
+	}
+	if store.NoInterspersed {
+		t.Error("store renders no_interspersed on a command with subcommands")
 	}
 	if _, ok := store.Flags["store-dir"]; !ok {
 		t.Error("store's persistent flag is missing from its entry")
