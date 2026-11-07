@@ -337,6 +337,9 @@ func validateCommand(path string, c *Command, inherited []surfaceFlag, common []
 		}
 	}
 	for _, sub := range c.Subcommands {
+		if sub.Name == "" {
+			return UsageErrorf("command %q has a subcommand with no name", path)
+		}
 		if err := validateCommand(path+" "+sub.Name, sub, surface, common, commonNames, checks); err != nil {
 			return err
 		}
