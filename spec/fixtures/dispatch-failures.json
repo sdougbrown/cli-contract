@@ -1,0 +1,86 @@
+{
+  "fixtureVersion": 1,
+  "id": "dispatch-failures",
+  "description": "Unknown commands, flags, and malformed flag values, plus missing and extra positionals, are usage errors: exit 2 with the app's error output and a diagnostic.",
+  "document": {
+    "schema": "cli-contract/cli-schema/v1",
+    "name": "fixture",
+    "version": "1.0.0",
+    "commands": {
+      "fetch": {
+        "short": "fetch a resource",
+        "use": "fetch <URL>",
+        "positionals": [{ "name": "URL", "required": true }],
+        "url_positional": true,
+        "flags": {
+          "depth": { "kind": "integer", "usage": "fetch depth", "default": 3 }
+        },
+        "output": { "mode": "json", "success_exit_codes": [0] }
+      },
+      "store": {
+        "short": "store utilities",
+        "use": "store",
+        "url_positional": false,
+        "subcommands": {
+          "path": {
+            "short": "print the store path",
+            "use": "path",
+            "url_positional": false,
+            "output": { "mode": "json", "success_exit_codes": [0] }
+          },
+          "reset": {
+            "short": "delete the store",
+            "use": "reset",
+            "url_positional": false,
+            "flags": {
+              "target": { "kind": "string", "usage": "scope the reset", "default": "" }
+            },
+            "output": { "mode": "json", "success_exit_codes": [0] }
+          }
+        }
+      }
+    },
+    "common_flags": {}
+  },
+  "cases": [
+    {
+      "id": "unknown-command",
+      "argv": ["nope"],
+      "expect": { "exit": 2, "stdout": { "class": "json-value" }, "stderr": { "class": "non-empty" } }
+    },
+    {
+      "id": "missing-positional",
+      "argv": ["fetch"],
+      "expect": { "exit": 2, "stdout": { "class": "json-value" }, "stderr": { "class": "prefix", "text": "fetch:" } }
+    },
+    {
+      "id": "extra-positional",
+      "argv": ["fetch", "a", "b"],
+      "expect": { "exit": 2, "stdout": { "class": "json-value" }, "stderr": { "class": "prefix", "text": "fetch:" } }
+    },
+    {
+      "id": "unknown-flag",
+      "argv": ["fetch", "--nope", "u"],
+      "expect": { "exit": 2, "stdout": { "class": "json-value" }, "stderr": { "class": "prefix", "text": "fetch:" } }
+    },
+    {
+      "id": "malformed-flag-value",
+      "argv": ["fetch", "--depth", "deep", "u"],
+      "expect": { "exit": 2, "stdout": { "class": "json-value" }, "stderr": { "class": "prefix", "text": "fetch:" } }
+    },
+    {
+      "id": "nested-unknown-flag",
+      "argv": ["store", "reset", "--nope"],
+      "expect": { "exit": 2, "stdout": { "class": "json-value" }, "stderr": { "class": "prefix", "text": "store reset:" } }
+    },
+    {
+      "id": "missing-subcommand",
+      "argv": ["store"],
+      "expect": {
+        "exit": 2,
+        "stdout": { "class": "json-value" },
+        "stderr": { "class": "prefix", "text": "store requires a subcommand:" }
+      }
+    }
+  ]
+}
