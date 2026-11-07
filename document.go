@@ -1,5 +1,7 @@
 package clicontract
 
+import "strings"
+
 // The schema document: the declared command surface and the behavior the
 // library fixes, rendered as one machine-readable value. Apps encode it and
 // add their own facts (statuses, error codes, envelope fields, exit codes)
@@ -37,8 +39,26 @@ type SchemaDocument struct {
 
 // SchemaDocument renders the declaration as the v1 document. It composes
 // Schemas and CommonFlagSchemas, so the per-command and aggregate renderings
-// cannot disagree.
-func (a *App) SchemaDocument() SchemaDocument {
+// cannot disagree. Like the registry manifest, it renders without building a
+// tree, so it re-checks the output declarations itself.
+func (a *App) SchemaDocument() (SchemaDocument, error) {
+	var walk func(path []string, cmd *Command) error
+	walk = func(path []string, cmd *Command) error {
+		if err := cmd.ValidateOutput(strings.Join(path, " ")); err != nil {
+			return err
+		}
+		for _, sub := range cmd.Subcommands {
+			if err := walk(append(path, sub.Name), sub); err != nil {
+				return err
+			}
+		}
+		return nil
+	}
+	for _, cmd := range a.Commands {
+		if err := walk([]string{cmd.Name}, cmd); err != nil {
+			return SchemaDocument{}, err
+		}
+	}
 	doc := SchemaDocument{
 		Schema:              SchemaDocumentV1,
 		Name:                a.Name,
@@ -58,5 +78,5 @@ func (a *App) SchemaDocument() SchemaDocument {
 	if !a.HandlerOwnedSignals {
 		doc.Signals = SignalExitCodes()
 	}
-	return doc
+	return doc, nil
 }

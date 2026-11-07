@@ -354,8 +354,9 @@ func declaresHelp(inherited []surfaceFlag, flags []Flag) bool {
 // command, and a mode without a success-code list leaves it guessing which
 // exits decode.
 //
-// Run, Parse, and Tree reach it through validate; the registry manifest checks
-// it directly, since it renders the declaration without building a tree.
+// Run, Parse, and Tree reach it through validate; the registry manifest and
+// the schema document render without building a tree, so each checks it
+// directly.
 func (c *Command) ValidateOutput(path string) error {
 	o := c.Output
 	declared := o.Mode != "" || o.JSONPointer != "" || len(o.SuccessExitCodes) > 0

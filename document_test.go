@@ -60,7 +60,10 @@ func schemaDocumentApp() *App {
 
 func TestSchemaDocumentRendersTheSurface(t *testing.T) {
 	app := schemaDocumentApp()
-	doc := app.SchemaDocument()
+	doc, err := app.SchemaDocument()
+	if err != nil {
+		t.Fatal(err)
+	}
 
 	if doc.Schema != SchemaDocumentV1 || doc.Name != "fixture" || doc.Version != "1.2.3" {
 		t.Errorf("document header = %+v", doc)
@@ -133,11 +136,56 @@ func TestSchemaDocumentRendersTheSurface(t *testing.T) {
 	})
 }
 
+// TestSchemaDocumentRejectsMalformedOutput pins the third render path: the
+// document renders the declaration without building a tree, so it runs the
+// same output check Run, Tree, and the manifest run.
+func TestSchemaDocumentRejectsMalformedOutput(t *testing.T) {
+	handle := func(ctx context.Context, inv Invocation, _ io.Writer) (any, error) {
+		return nil, nil
+	}
+	cases := []struct {
+		name string
+		cmd  *Command
+		want string
+	}{
+		{
+			name: "unknown mode",
+			cmd:  &Command{Name: "probe", Short: "run one probe", Output: Output{Mode: "yaml"}, Handle: handle},
+			want: `output mode "yaml"`,
+		},
+		{
+			name: "mode without success codes",
+			cmd:  &Command{Name: "probe", Short: "run one probe", Output: Output{Mode: OutputJSON}, Handle: handle},
+			want: "without success exit codes",
+		},
+		{
+			name: "parent declares output",
+			cmd: &Command{
+				Name: "store", Short: "store utilities",
+				Output:      Output{Mode: OutputJSON, SuccessExitCodes: []int{0}},
+				Subcommands: []*Command{{Name: "path", Short: "print the path", Handle: handle}},
+			},
+			want: "only a leaf command can",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := (&App{Name: "t", Version: "v1", RootShort: "test cli", Commands: []*Command{tc.cmd}}).SchemaDocument()
+			if err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Errorf("err = %v, want it to contain %q", err, tc.want)
+			}
+		})
+	}
+}
+
 // TestSchemaDocumentDetachesFromDeclaration pins the copy outputValue makes:
 // mutating the declaration after rendering must not reach the document.
 func TestSchemaDocumentDetachesFromDeclaration(t *testing.T) {
 	app := schemaDocumentApp()
-	doc := app.SchemaDocument()
+	doc, err := app.SchemaDocument()
+	if err != nil {
+		t.Fatal(err)
+	}
 	app.Commands[0].Output.SuccessExitCodes[0] = 9
 	if got := doc.Commands["fetch"].Output.SuccessExitCodes; !reflect.DeepEqual(got, []int{0}) {
 		t.Errorf("document success codes = %v, want the rendered [0], not the mutated declaration", got)
@@ -152,27 +200,36 @@ func TestSchemaDocumentJSONShape(t *testing.T) {
 	app.Commands[0].InputRules = []*Rule{
 		RequiresOn("depth", Present("URL"), "a depth needs a URL"),
 	}
-	b, err := json.Marshal(app.SchemaDocument())
+	doc, err := app.SchemaDocument()
 	if err != nil {
 		t.Fatal(err)
 	}
-	var doc map[string]any
-	if err := json.Unmarshal(b, &doc); err != nil {
+	b, err := json.Marshal(doc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var wire map[string]any
+	if err := json.Unmarshal(b, &wire); err != nil {
 		t.Fatal(err)
 	}
 	for _, key := range []string{"schema", "name", "version", "commands", "common_flags", "conditions", "signals"} {
-		if _, ok := doc[key]; !ok {
+		if _, ok := wire[key]; !ok {
 			t.Errorf("document has no %q key", key)
 		}
 	}
-	if doc["schema"] != "cli-contract/cli-schema/v1" {
-		t.Errorf("schema id = %v, want the v1 identifier literal", doc["schema"])
+	if wire["schema"] != "cli-contract/cli-schema/v1" {
+		t.Errorf("schema id = %v, want the v1 identifier literal", wire["schema"])
 	}
-	if _, ok := doc["handler_owned_signals"]; ok {
+	if _, ok := wire["handler_owned_signals"]; ok {
 		t.Error("document declares handler_owned_signals for an app that did not")
 	}
+
 	app.CommonFlags = nil
-	b, err = json.Marshal(app.SchemaDocument())
+	doc, err = app.SchemaDocument()
+	if err != nil {
+		t.Fatal(err)
+	}
+	b, err = json.Marshal(doc)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -184,7 +241,7 @@ func TestSchemaDocumentJSONShape(t *testing.T) {
 		t.Errorf("app with no common flags renders common_flags: %v", noCommon["common_flags"])
 	}
 
-	commands, ok := doc["commands"].(map[string]any)
+	commands, ok := wire["commands"].(map[string]any)
 	if !ok {
 		t.Fatal("commands is not an object")
 	}
@@ -217,7 +274,7 @@ func TestSchemaDocumentJSONShape(t *testing.T) {
 	if _, ok := store["subcommands"]; !ok {
 		t.Error("commands.store has no \"subcommands\" key")
 	}
-	conditions, ok := doc["conditions"].(map[string]any)
+	conditions, ok := wire["conditions"].(map[string]any)
 	if !ok {
 		t.Fatal("conditions is not an object")
 	}
@@ -272,7 +329,10 @@ func TestSchemaDocumentJSONShape(t *testing.T) {
 func TestSchemaDocumentHandlerOwnedSignals(t *testing.T) {
 	app := schemaDocumentApp()
 	app.HandlerOwnedSignals = true
-	doc := app.SchemaDocument()
+	doc, err := app.SchemaDocument()
+	if err != nil {
+		t.Fatal(err)
+	}
 
 	if doc.Signals != nil {
 		t.Errorf("signals = %v, want none: the app chooses its own codes", doc.Signals)
