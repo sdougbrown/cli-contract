@@ -278,6 +278,9 @@ type surfaceFlag struct {
 // walk: rules declared on this command validate against the shared condition
 // set.
 func validateCommand(path string, c *Command, inherited []surfaceFlag, common []Flag, commonNames map[string]bool, checks *availabilityChecks) error {
+	if c.Name == "" {
+		return UsageErrorf("command %q has no name", path)
+	}
 	if c.Short == "" {
 		return UsageErrorf("command %q has no help short", path)
 	}

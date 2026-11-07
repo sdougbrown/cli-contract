@@ -38,7 +38,7 @@ func schemaDocumentApp() *App {
 					{Name: "retries", Kind: Int, Usage: "retry count"},
 					{Name: "grace", Kind: Duration, Usage: "grace period"},
 					{Name: "verbose", Kind: Bool, Usage: "log requests", Default: true},
-					{Name: "label", Kind: String, Usage: "request label", Default: "standard"},
+					{Name: "label", Kind: String, Usage: "request label", Default: "standard", Required: true},
 					{Name: "tags", Kind: Repeat, Usage: "tags to attach", Default: []string{"draft"}},
 				},
 				Output: Output{Mode: OutputJSON, JSONPointer: "/item", SuccessExitCodes: []int{0}},
@@ -236,6 +236,86 @@ func TestValidateRejectsParentPositionals(t *testing.T) {
 	}
 }
 
+// TestSchemaDocumentRejectsUnrenderableDeclarations pins the renderer's input
+// guards: an app with no commands and a command with no name both fail the
+// rendering instead of emitting a document the published schema rejects.
+func TestSchemaDocumentRejectsUnrenderableDeclarations(t *testing.T) {
+	empty := &App{Name: "t", Version: "v1", RootShort: "test cli"}
+	if _, err := empty.SchemaDocument(); err == nil || !strings.Contains(err.Error(), "declares no commands") {
+		t.Errorf("err = %v, want the no-commands rejection", err)
+	}
+	// The no-name rejection is the tree path's: validate owns it, and the
+	// document walk inherits it through App's validate.
+	named := &App{
+		Name: "t", Version: "v1", RootShort: "test cli",
+		Commands: []*Command{{Name: "", Short: "no name", Handle: func(ctx context.Context, inv Invocation, _ io.Writer) (any, error) {
+			return nil, nil
+		}}},
+	}
+	if msg := validateMessage(named); !strings.Contains(msg, `command "" has no name`) {
+		t.Errorf("validate message = %q, want the no-name rejection", msg)
+	}
+}
+
+// TestSchemasZeroesParentRules pins the direct-call guard: Schemas() validates
+// nothing, so it must zero leaf-only members rather than publish them.
+func TestSchemasZeroesParentRules(t *testing.T) {
+	app := schemaDocumentApp()
+	app.Commands[2].Availability = []*Rule{
+		Enabled(Present("store-dir"), "a store needs a directory"),
+	}
+	schemas := app.Schemas()
+	if len(schemas["store"].Availability) != 0 {
+		t.Errorf("parent availability = %+v, want none on a command with subcommands", schemas["store"].Availability)
+	}
+	if len(schemas["store"].InputRules) != 0 {
+		t.Errorf("parent input rules = %+v, want none on a command with subcommands", schemas["store"].InputRules)
+	}
+}
+
+func TestDocumentAppAppliesHandWrittenDefaults(t *testing.T) {
+	doc := &SchemaDocument{
+		Schema: "cli-contract/cli-schema/v1",
+		Commands: map[string]CommandSchema{
+			"probe": {
+				Short:  "probe",
+				Use:    "probe",
+				Output: &Output{Mode: OutputJSON, SuccessExitCodes: []int{0}},
+				Flags: map[string]FlagSchema{
+					"n":     {Kind: "integer", Usage: "n", Default: 3},
+					"grace": {Kind: "duration", Usage: "grace", Default: 5 * time.Second},
+					"tags":  {Kind: "repeat", Usage: "tags", Default: []string{"draft"}},
+				},
+			},
+		},
+	}
+	app, err := doc.App(map[string]HandleFunc{"probe": func(ctx context.Context, inv Invocation, _ io.Writer) (any, error) {
+		return nil, nil
+	}})
+	if err != nil {
+		t.Fatalf("App rejected a hand-written int default: %v", err)
+	}
+	var probe *Command
+	for _, cmd := range app.Commands {
+		if cmd.Name == "probe" {
+			probe = cmd
+		}
+	}
+	defaults := map[string]any{}
+	for _, flag := range probe.Flags {
+		defaults[flag.Name] = flag.Default
+	}
+	if got, ok := defaults["n"].(int); !ok || got != 3 {
+		t.Errorf("n default = %#v, want the declared int 3", defaults["n"])
+	}
+	if got, ok := defaults["grace"].(time.Duration); !ok || got != 5*time.Second {
+		t.Errorf("grace default = %#v, want the declared 5s duration", defaults["grace"])
+	}
+	if got, ok := defaults["tags"].([]string); !ok || len(got) != 1 || got[0] != "draft" {
+		t.Errorf("tags default = %#v, want the declared [draft]", defaults["tags"])
+	}
+}
+
 // TestParseSchemaDocumentRejectsMalformedInput pins the decoder's early
 // failures: unparseable JSON and a document with no schema identifier.
 func TestParseSchemaDocumentRejectsMalformedInput(t *testing.T) {
@@ -245,6 +325,10 @@ func TestParseSchemaDocumentRejectsMalformedInput(t *testing.T) {
 	_, err := ParseSchemaDocument([]byte(`{"name": "fixture"}`))
 	if err == nil || !strings.Contains(err.Error(), "no schema id") {
 		t.Errorf("err = %v, want the missing schema id rejection", err)
+	}
+	_, err = ParseSchemaDocument([]byte(`{"schema": "cli-contract/cli-schema/v2"}`))
+	if err == nil || !strings.Contains(err.Error(), "unsupported schema id") {
+		t.Errorf("err = %v, want the unsupported schema id rejection", err)
 	}
 }
 
@@ -604,7 +688,7 @@ func TestDocumentAppRunsTheDeclaredSurface(t *testing.T) {
 
 	var stdout, stderr bytes.Buffer
 	adapter := &testAdapter{}
-	if code := Run(app, adapter, []string{"fetch", "--depth", "7", "u"}, &stdout, &stderr); code != ExitOK {
+	if code := Run(app, adapter, []string{"fetch", "--depth", "7", "--label", "standard", "u"}, &stdout, &stderr); code != ExitOK {
 		t.Fatalf("code = %d, stderr = %q", code, stderr.String())
 	}
 	got := adapter.wrote[0].(map[string]any)
@@ -652,6 +736,14 @@ func TestDocumentAppRejectsURLMismatch(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), `command "fetch" declares url_positional false but its positionals say true`) {
 		t.Fatalf("err = %v, want the inconsistency named", err)
 	}
+	fetch = doc.Commands["fetch"]
+	fetch.URL = true
+	fetch.Positionals = nil
+	doc.Commands["fetch"] = fetch
+	_, err = doc.App(docHandlers())
+	if err == nil || !strings.Contains(err.Error(), `command "fetch" declares url_positional true but its positionals say false`) {
+		t.Fatalf("err = %v, want the reverse inconsistency named", err)
+	}
 }
 
 // TestDocumentAppRejectsUnappliableDeclarations keeps App honest where the
@@ -692,6 +784,11 @@ func TestDocumentAppRejectsUnappliableDeclarations(t *testing.T) {
 			want:     `string default 42 is not a string`,
 		},
 		{
+			name:     "repeat default with a non-string element",
+			commands: leaf(map[string]FlagSchema{"t": {Kind: "repeat", Usage: "t", Default: []any{"a", 1}}}),
+			want:     `repeat default [a 1] is not an array of strings`,
+		},
+		{
 			name:     "repeat default as a scalar",
 			commands: leaf(map[string]FlagSchema{"t": {Kind: "repeat", Usage: "t", Default: "x"}}),
 			want:     `repeat default x is not an array`,
@@ -704,7 +801,7 @@ func TestDocumentAppRejectsUnappliableDeclarations(t *testing.T) {
 		{
 			name:     "numeric duration default is rejected",
 			commands: leaf(map[string]FlagSchema{"d": {Kind: "duration", Usage: "d", Default: 5.0}}),
-			want:     `duration default 5 is neither a duration string nor a number`,
+			want:     `duration default 5 is not a duration string`,
 		},
 		{
 			name:     "fractional integer default",

@@ -154,6 +154,8 @@ func (c *Command) Schema() CommandSchema {
 		entry.Positionals = nil
 		entry.NoInterspersed = false
 		entry.Output = nil
+		entry.InputRules = nil
+		entry.Availability = nil
 		entry.Flags = nil
 		if len(c.PersistentFlags) > 0 {
 			// Subcommands inherit these; the parent's entry is where

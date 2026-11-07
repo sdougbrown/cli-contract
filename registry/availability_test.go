@@ -667,6 +667,27 @@ func TestManifestAvailabilityRejectsParentRules(t *testing.T) {
 	}
 }
 
+func TestManifestRejectsParentPositionals(t *testing.T) {
+	// The leaf-only shape rule is enforced by the manifest walk too: a parent
+	// declaring positionals or no_interspersed is a caller error everywhere.
+	positionals := availabilityApp()
+	positionals.Commands[0].Positionals = []clicontract.Positional{{Name: "DIR"}}
+	positionals.Commands[0].Subcommands = []*clicontract.Command{
+		{Name: "sub", Short: "s", Handle: noopHandle},
+	}
+	if _, err := Manifest(positionals, Options{Binary: "testcli"}); err == nil || !strings.Contains(err.Error(), "owns subcommands and declares positionals") {
+		t.Fatalf("err = %v, want the parent positionals rejection", err)
+	}
+	strict := availabilityApp()
+	strict.Commands[0].NoInterspersed = true
+	strict.Commands[0].Subcommands = []*clicontract.Command{
+		{Name: "sub", Short: "s", Handle: noopHandle},
+	}
+	if _, err := Manifest(strict, Options{Binary: "testcli"}); err == nil || !strings.Contains(err.Error(), "declares positionals or no_interspersed") {
+		t.Fatalf("err = %v, want the parent no_interspersed rejection", err)
+	}
+}
+
 func TestManifestAvailabilityUnknownFieldFails(t *testing.T) {
 	// An explicit Field on EnabledOn/RequiresOn must resolve against the
 	// generated tool set at startup, not at the consumer.
