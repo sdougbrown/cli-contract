@@ -148,3 +148,31 @@ func TestCheckCouldNotRunExitsTwo(t *testing.T) {
 		t.Fatalf("exit = %d, want 2: the check could not run", code)
 	}
 }
+
+// TestCheckMissingTargetExitsTwo pins the launch-failure path: the document
+// loads, but no case can start because the target cannot be executed.
+func TestCheckMissingTargetExitsTwo(t *testing.T) {
+	if testing.Short() {
+		t.Skip("builds a binary")
+	}
+	bin := buildChecker(t)
+
+	doc := filepath.Join(t.TempDir(), "schema.json")
+	document := `{
+	  "schema": "cli-contract/cli-schema/v1",
+	  "name": "target",
+	  "commands": {
+	    "only": {"short": "do one thing", "use": "only", "url_positional": false}
+	  },
+	  "common_flags": {}
+	}`
+	if err := os.WriteFile(doc, []byte(document), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	target := filepath.Join(t.TempDir(), "missing-target")
+	code, _ := runChecker(t, bin, "check", "--schema-file", doc, target)
+	if code != 2 {
+		t.Fatalf("exit = %d, want 2: the check could not run", code)
+	}
+}

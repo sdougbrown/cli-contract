@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/sdougbrown/cli-contract"
+	"github.com/sdougbrown/cli-contract/internal/streamclass"
 )
 
 // nestedDoc declares one parent with one leaf subcommand, so every derived
@@ -93,6 +94,23 @@ func TestRunTimesOut(t *testing.T) {
 	}
 }
 
+// TestLoadDocumentTimesOut pins the schema-command hang path: a command
+// killed at the deadline has no observed exit, so the error must say it timed
+// out rather than report a made-up exit code.
+func TestLoadDocumentTimesOut(t *testing.T) {
+	sleep, err := exec.LookPath("sleep")
+	if err != nil {
+		t.Skip("no sleep(1) on this platform")
+	}
+	_, err = loadDocument([]string{sleep}, "", "5", 100*time.Millisecond)
+	if err == nil {
+		t.Fatal("a timed-out schema command produced no error")
+	}
+	if !strings.Contains(err.Error(), "timed out") {
+		t.Errorf("error = %q, want a timeout explanation", err)
+	}
+}
+
 // TestJudgeClasses pins the JSON-vs-plain-text boundary: help output must not
 // be a JSON document, and a JSON-success case must reject prose.
 func TestJudgeClasses(t *testing.T) {
@@ -105,27 +123,35 @@ func TestJudgeClasses(t *testing.T) {
 	}{
 		{
 			name:   "plain text rejects a JSON value",
-			want:   Want{Exit: 0, Stdout: ClassPlainText},
+			want:   Want{Exit: 0, Stdout: streamclass.PlainText},
 			got:    Got{Stdout: `{"a":1}`},
 			detail: "stdout is a JSON value, want plain text",
 		},
 		{
 			name: "plain text accepts prose",
-			want: Want{Exit: 0, Stdout: ClassPlainText},
+			want: Want{Exit: 0, Stdout: streamclass.PlainText},
 			got:  Got{Stdout: "usage: t\n"},
 			ok:   true,
 		},
 		{
 			name: "json value accepts a JSON value",
-			want: Want{Exit: 0, Stdout: ClassJSONValue},
+			want: Want{Exit: 0, Stdout: streamclass.JSONValue},
 			got:  Got{Stdout: `{"status":"ok"}`},
 			ok:   true,
 		},
 		{
 			name:   "json value rejects prose",
-			want:   Want{Exit: 0, Stdout: ClassJSONValue},
+			want:   Want{Exit: 0, Stdout: streamclass.JSONValue},
 			got:    Got{Stdout: "status: ok\n"},
 			detail: "stdout is not one JSON value",
+		},
+		{
+			// The classes are satisfiable here, so only the exit branch can
+			// produce this verdict.
+			name:   "exit mismatch fails before the stream classes",
+			want:   Want{Exit: 2, Stdout: streamclass.NonEmpty},
+			got:    Got{Exit: 0, Stdout: "usage: t\n"},
+			detail: "exit 0, want 2",
 		},
 	}
 	for _, c := range cases {

@@ -7,7 +7,6 @@ package check
 import (
 	"bytes"
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"maps"
@@ -18,6 +17,7 @@ import (
 	"time"
 
 	"github.com/sdougbrown/cli-contract"
+	"github.com/sdougbrown/cli-contract/internal/streamclass"
 )
 
 // Timeouts bound one invocation. A target that hangs must fail the case, not
@@ -32,15 +32,8 @@ const (
 // not claim 0.
 const timedOutExit = -1
 
-// Stream class names a case may require. They mirror the fixture classes, so a
-// black-box case and a fixture case state the same thing.
-const (
-	ClassEmpty     = "empty"
-	ClassNonEmpty  = "non-empty"
-	ClassPlainText = "plain-text"
-	ClassJSONValue = "json-value"
-	ClassAny       = ""
-)
+// ClassAny requires nothing of a stream.
+const ClassAny = ""
 
 // Want is the behavior one case requires.
 type Want struct {
@@ -89,15 +82,15 @@ type Report struct {
 // long enough to be signalled, which the surface does not declare.
 func Derive(doc *clicontract.SchemaDocument) []Case {
 	cases := []Case{
-		{ID: "help:root", Argv: []string{"--help"}, Want: Want{Exit: 0, Stdout: ClassPlainText}},
-		{ID: "unknown-flag:root", Argv: []string{"--cli-contract-unknown-flag"}, Want: Want{Exit: 2, Stderr: ClassNonEmpty}},
-		{ID: "unknown-command:root", Argv: []string{"cli-contract-unknown-command"}, Want: Want{Exit: 2, Stderr: ClassNonEmpty}},
+		{ID: "help:root", Argv: []string{"--help"}, Want: Want{Exit: 0, Stdout: streamclass.PlainText}},
+		{ID: "unknown-flag:root", Argv: []string{"--cli-contract-unknown-flag"}, Want: Want{Exit: 2, Stderr: streamclass.NonEmpty}},
+		{ID: "unknown-command:root", Argv: []string{"cli-contract-unknown-command"}, Want: Want{Exit: 2, Stderr: streamclass.NonEmpty}},
 	}
 	if doc.Version != "" {
 		cases = append(cases, Case{
 			ID:   "version:root",
 			Argv: []string{"--version"},
-			Want: Want{Exit: 0, Stdout: ClassNonEmpty},
+			Want: Want{Exit: 0, Stdout: streamclass.NonEmpty},
 		})
 	}
 	walk(doc.Commands, "", func(path string, cmd clicontract.CommandSchema) {
@@ -107,13 +100,13 @@ func Derive(doc *clicontract.SchemaDocument) []Case {
 				ID:      "help:" + path,
 				Command: path,
 				Argv:    append(append([]string{}, names...), "--help"),
-				Want:    Want{Exit: 0, Stdout: ClassPlainText},
+				Want:    Want{Exit: 0, Stdout: streamclass.PlainText},
 			},
 			Case{
 				ID:      "unknown-flag:" + path,
 				Command: path,
 				Argv:    append(append([]string{}, names...), "--cli-contract-unknown-flag"),
-				Want:    Want{Exit: 2, Stderr: ClassNonEmpty},
+				Want:    Want{Exit: 2, Stderr: streamclass.NonEmpty},
 			},
 		)
 		if len(cmd.Subcommands) == 0 && hasRequiredPositional(cmd) {
@@ -121,7 +114,7 @@ func Derive(doc *clicontract.SchemaDocument) []Case {
 				ID:      "missing-positional:" + path,
 				Command: path,
 				Argv:    names,
-				Want:    Want{Exit: 2, Stderr: ClassNonEmpty},
+				Want:    Want{Exit: 2, Stderr: streamclass.NonEmpty},
 			})
 		}
 	})
@@ -209,45 +202,27 @@ func judge(want Want, got Got) (bool, string) {
 // checkClass tests one stream against its required class. An empty class
 // imposes no requirement.
 func checkClass(stream, class, got string) (bool, string) {
-	switch class {
-	case ClassAny:
+	if class == ClassAny {
 		return true, ""
-	case ClassEmpty:
-		if strings.TrimSpace(got) != "" {
-			return false, stream + " is not empty"
-		}
-	case ClassNonEmpty:
-		if strings.TrimSpace(got) == "" {
-			return false, stream + " is empty"
-		}
-	case ClassPlainText:
-		if strings.TrimSpace(got) == "" {
-			return false, stream + " is empty, want plain text"
-		}
-		if isJSONValue(got) {
-			return false, stream + " is a JSON value, want plain text"
-		}
-	case ClassJSONValue:
-		if !isJSONValue(got) {
-			return false, stream + " is not one JSON value"
-		}
-	default:
+	}
+	reason := streamclass.Judge(class, got)
+	if reason.OK() {
+		return true, ""
+	}
+	if reason == streamclass.ReasonUnknownClass {
 		return false, fmt.Sprintf("unknown class %q", class)
 	}
-	return true, ""
-}
-
-func isJSONValue(s string) bool {
-	if strings.TrimSpace(s) == "" {
-		return false
-	}
-	var value any
-	return json.Unmarshal([]byte(s), &value) == nil
+	return false, stream + " " + reason.String()
 }
 
 // LoadDocument reads the target's schema document, either from a file or by
 // running the target's schema command.
 func LoadDocument(target []string, schemaFile, schemaCommand string) (*clicontract.SchemaDocument, error) {
+	return loadDocument(target, schemaFile, schemaCommand, schemaTimeout)
+}
+
+// loadDocument is LoadDocument under a caller-chosen schema-command timeout.
+func loadDocument(target []string, schemaFile, schemaCommand string, timeout time.Duration) (*clicontract.SchemaDocument, error) {
 	if schemaFile != "" {
 		data, err := os.ReadFile(schemaFile)
 		if err != nil {
@@ -259,9 +234,12 @@ func LoadDocument(target []string, schemaFile, schemaCommand string) (*clicontra
 		return nil, errors.New("check: no target binary")
 	}
 	argv := append(append([]string{}, target...), schemaCommand)
-	ctx, cancel := context.WithTimeout(context.Background(), schemaTimeout)
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
 	out, err := exec.CommandContext(ctx, argv[0], argv[1:]...).Output()
+	if ctx.Err() == context.DeadlineExceeded {
+		return nil, fmt.Errorf("check: %s timed out after %s", strings.Join(argv, " "), timeout)
+	}
 	if err != nil {
 		var exit *exec.ExitError
 		if errors.As(err, &exit) {

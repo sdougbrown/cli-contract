@@ -23,6 +23,8 @@ import (
 	"strings"
 	"syscall"
 	"testing"
+
+	"github.com/sdougbrown/cli-contract/internal/streamclass"
 )
 
 type conformanceIndex struct {
@@ -311,34 +313,21 @@ func assertClass(t *testing.T, stream, got string, want *classExpect) {
 		t.Fatalf("%s: %s\nwant %+v", stream, fmt.Sprintf(format, args...), *want)
 	}
 	switch want.Class {
-	case "empty":
-		if strings.TrimSpace(got) != "" {
-			fail("not empty")
+	case streamclass.Empty, streamclass.NonEmpty, streamclass.PlainText, streamclass.JSONValue:
+		if reason := streamclass.Judge(want.Class, got); !reason.OK() {
+			fail("%s", reason)
 		}
-	case "non-empty":
-		if strings.TrimSpace(got) == "" {
-			fail("empty")
+		if want.Class == streamclass.PlainText {
+			if text, ok := want.Equals.(string); ok && got != text {
+				fail("text = %q, want %q", got, text)
+			}
 		}
 	case "prefix":
 		if !strings.HasPrefix(got, want.Text) {
 			fail("missing prefix %q", want.Text)
 		}
-	case "plain-text":
-		if strings.TrimSpace(got) == "" {
-			fail("empty")
-		}
-		if _, ok := decodeOneJSONValue(got); ok {
-			fail("decoded as JSON, want plain text")
-		}
-		if text, ok := want.Equals.(string); ok && got != text {
-			fail("text = %q, want %q", got, text)
-		}
-	case "json-value":
-		if _, ok := decodeOneJSONValue(got); !ok {
-			fail("not one JSON value")
-		}
 	case "json-matches":
-		value, ok := decodeOneJSONValue(got)
+		value, ok := streamclass.DecodeOneJSONValue(got)
 		if !ok {
 			fail("not one JSON value")
 		}
@@ -352,18 +341,6 @@ func assertClass(t *testing.T, stream, got string, want *classExpect) {
 	default:
 		fail("unknown class %q", want.Class)
 	}
-}
-
-// decodeOneJSONValue decodes exactly one JSON value from one stream.
-func decodeOneJSONValue(s string) (any, bool) {
-	if strings.TrimSpace(s) == "" {
-		return nil, false
-	}
-	var value any
-	if err := json.Unmarshal([]byte(s), &value); err != nil {
-		return nil, false
-	}
-	return value, true
 }
 
 // resolveJSONPointer resolves an RFC 6901 pointer against a decoded JSON value.
