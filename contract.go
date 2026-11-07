@@ -82,15 +82,17 @@ const (
 
 // Output declares how one command's output is decoded and which exit codes
 // mean success. The zero value declares nothing. Mode is required once any
-// other member is set, and only a leaf command may declare it.
+// other member is set, a mode requires SuccessExitCodes, and only a leaf
+// command may declare it.
 type Output struct {
 	Mode OutputMode `json:"mode"`
 	// JSONPointer is the location of the command's result inside the JSON
 	// value, for consumers that present a field rather than the envelope.
 	// Empty means the value itself is the result.
 	JSONPointer string `json:"json_pointer,omitempty"`
-	// SuccessExitCodes lists the exit codes that mean success. Empty means
-	// the spec's default: 0.
+	// SuccessExitCodes lists the exit codes that mean success. A declared
+	// mode requires an explicit list, so the published contract is the one
+	// the author stated, never a default the renderer invented.
 	SuccessExitCodes []int `json:"success_exit_codes,omitempty"`
 }
 
@@ -348,7 +350,8 @@ func declaresHelp(inherited []surfaceFlag, flags []Flag) bool {
 // output of its own, so a command with subcommands cannot declare one. The
 // optional members widen a mode rather than standing alone: a pointer or a
 // success-code list without a mode leaves the consumer unable to decode the
-// command.
+// command, and a mode without a success-code list leaves it guessing which
+// exits decode.
 //
 // Run, Parse, and Tree reach it through validate; the registry manifest checks
 // it directly, since it renders the declaration without building a tree.
@@ -389,6 +392,9 @@ func (c *Command) ValidateOutput(path string) error {
 			return UsageErrorf("command %q declares success exit code %d twice", path, code)
 		}
 		seen[code] = true
+	}
+	if len(o.SuccessExitCodes) == 0 {
+		return UsageErrorf("command %q declares output mode %q without success exit codes", path, o.Mode)
 	}
 	return nil
 }

@@ -40,7 +40,7 @@ func schemaDocumentApp() *App {
 				Availability: []*Rule{
 					Enabled(Not(When("read_only")), "the profile is read-only"),
 				},
-				Output: Output{Mode: OutputRaw},
+				Output: Output{Mode: OutputRaw, SuccessExitCodes: []int{0}},
 				Handle: handle,
 			},
 			{
@@ -91,7 +91,7 @@ func TestSchemaDocumentRendersTheSurface(t *testing.T) {
 	if len(edit.Availability) != 1 || edit.Availability[0].Type != "enabledWhen" {
 		t.Errorf("edit availability = %+v", edit.Availability)
 	}
-	if edit.Output == nil || edit.Output.Mode != OutputRaw {
+	if edit.Output == nil || edit.Output.Mode != OutputRaw || !reflect.DeepEqual(edit.Output.SuccessExitCodes, []int{0}) {
 		t.Errorf("edit output = %+v", edit.Output)
 	}
 
@@ -126,7 +126,12 @@ func TestSchemaDocumentRendersTheSurface(t *testing.T) {
 // TestSchemaDocumentJSONShape pins the wire names a consumer reads, not the Go
 // field names. A consumer outside Go only ever sees these.
 func TestSchemaDocumentJSONShape(t *testing.T) {
-	b, err := json.Marshal(schemaDocumentApp().SchemaDocument())
+	app := schemaDocumentApp()
+	// One input rule so the wire name for the rule list is pinned too.
+	app.Commands[0].InputRules = []*Rule{
+		RequiresOn("depth", Present("URL"), "a depth needs a URL"),
+	}
+	b, err := json.Marshal(app.SchemaDocument())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -151,10 +156,20 @@ func TestSchemaDocumentJSONShape(t *testing.T) {
 	if !ok {
 		t.Fatal("commands.fetch is not an object")
 	}
-	for _, key := range []string{"positionals", "no_interspersed", "output"} {
+	for _, key := range []string{"positionals", "no_interspersed", "input_rules", "output"} {
 		if _, ok := fetch[key]; !ok {
 			t.Errorf("commands.fetch has no %q key", key)
 		}
+	}
+	if _, ok := fetch["inputRules"]; ok {
+		t.Error("commands.fetch renders the camelCase \"inputRules\" key")
+	}
+	edit, ok := commands["edit"].(map[string]any)
+	if !ok {
+		t.Fatal("commands.edit is not an object")
+	}
+	if _, ok := edit["availability"]; !ok {
+		t.Error("commands.edit has no \"availability\" key")
 	}
 	output, ok := fetch["output"].(map[string]any)
 	if !ok {
@@ -244,6 +259,11 @@ func TestValidateRejectsOutputDeclarations(t *testing.T) {
 			name: "repeated success code",
 			cmd:  leaf(Output{Mode: OutputNone, SuccessExitCodes: []int{0, 0}}),
 			want: `command "probe" declares success exit code 0 twice`,
+		},
+		{
+			name: "mode without success codes",
+			cmd:  leaf(Output{Mode: OutputJSON}),
+			want: `command "probe" declares output mode "json" without success exit codes`,
 		},
 	}
 	for _, tc := range cases {

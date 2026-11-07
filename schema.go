@@ -33,7 +33,7 @@ type CommandSchema struct {
 	URL            bool                     `json:"url_positional"`
 	NoInterspersed bool                     `json:"no_interspersed,omitempty"`
 	Flags          map[string]FlagSchema    `json:"flags,omitempty"`
-	InputRules     []Rule                   `json:"inputRules,omitempty"`
+	InputRules     []Rule                   `json:"input_rules,omitempty"`
 	Availability   []Rule                   `json:"availability,omitempty"`
 	Output         *Output                  `json:"output,omitempty"`
 	Subcommands    map[string]CommandSchema `json:"subcommands,omitempty"`

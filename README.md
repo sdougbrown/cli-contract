@@ -219,7 +219,9 @@ Output: clicontract.Output{
 The [registry](registry/registry.go) bridge copies the declaration into a
 manifest's `output` block instead of guessing it. It translates a JSON pointer
 to the manifest's `json-pointer` mode and `none` to `raw`, since a command
-that writes nothing has nothing to decode.
+that writes nothing has nothing to decode. A declared mode requires
+`SuccessExitCodes`, so a declared block publishes exactly the codes its author
+stated and the envelope default stays unique to commands that declare none.
 
 ## Availability
 
@@ -293,9 +295,9 @@ A flag declared `Required` is checked at the same point, which moves that
 failure from the handler to the parser.
 
 The rules validate with the rest of the surface and render into the command's
-schema entry as `inputRules`, beside `flags`, and into the [registry](registry/registry.go)
-manifest's tool block under the same key, for cli-registry to check before it
-starts the process.
+schema entry as `input_rules`, beside `flags`, and into the [registry](registry/registry.go)
+manifest's tool block as `inputRules`, the key cli-registry already reads,
+before it starts the process.
 
 `Run` and `Parse` enforce them too, so a handler never re-checks a relationship
 the declaration already states: a violating invocation is a caller error (exit

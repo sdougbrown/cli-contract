@@ -312,8 +312,8 @@ func TestSchemaRendersInputRules(t *testing.T) {
 			"when":   map[string]any{"op": "absent", "field": "prompt"},
 		},
 	}
-	if !reflect.DeepEqual(got["inputRules"], want) {
-		t.Errorf("inputRules = %#v, want %#v", got["inputRules"], want)
+	if !reflect.DeepEqual(got["input_rules"], want) {
+		t.Errorf("input_rules = %#v, want %#v", got["input_rules"], want)
 	}
 	if _, ok := got["flags"].(map[string]any); !ok {
 		t.Errorf("flags missing from the same entry: %#v", got)

@@ -38,17 +38,17 @@ func TestManifestOutputFollowsDeclaration(t *testing.T) {
 			{
 				Name:   "plain",
 				Short:  "one JSON value",
-				Output: clicontract.Output{Mode: clicontract.OutputJSON},
+				Output: clicontract.Output{Mode: clicontract.OutputJSON, SuccessExitCodes: []int{0}},
 			},
 			{
 				Name:   "field",
 				Short:  "one JSON value, one field",
-				Output: clicontract.Output{Mode: clicontract.OutputJSON, JSONPointer: "/status"},
+				Output: clicontract.Output{Mode: clicontract.OutputJSON, JSONPointer: "/status", SuccessExitCodes: []int{0}},
 			},
 			{
 				Name:   "text",
 				Short:  "raw text",
-				Output: clicontract.Output{Mode: clicontract.OutputRaw},
+				Output: clicontract.Output{Mode: clicontract.OutputRaw, SuccessExitCodes: []int{0}},
 			},
 			{
 				Name:   "quiet",
@@ -66,7 +66,7 @@ func TestManifestOutputFollowsDeclaration(t *testing.T) {
 	if plain["mode"] != "json" {
 		t.Errorf("plain mode = %v, want json", plain["mode"])
 	}
-	// A declared mode without codes falls back to the spec default.
+	// The manifest publishes exactly the codes the declaration states.
 	if codes, ok := plain["success_exit_codes"].([]any); !ok || len(codes) != 1 || codes[0] != float64(0) {
 		t.Errorf("plain success codes = %v, want [0]", plain["success_exit_codes"])
 	}
@@ -124,5 +124,16 @@ func TestManifestRejectsMalformedOutput(t *testing.T) {
 	_, err = Manifest(parent, Options{Binary: "testcli"})
 	if err == nil || !strings.Contains(err.Error(), "only a leaf command can") {
 		t.Fatalf("err = %v, want the non-leaf output rejection", err)
+	}
+
+	codesless := &clicontract.App{
+		Name: "testcli",
+		Commands: []*clicontract.Command{
+			{Name: "bad", Short: "bad output", Output: clicontract.Output{Mode: clicontract.OutputJSON}},
+		},
+	}
+	_, err = Manifest(codesless, Options{Binary: "testcli"})
+	if err == nil || !strings.Contains(err.Error(), "without success exit codes") {
+		t.Fatalf("err = %v, want the missing success codes rejection", err)
 	}
 }

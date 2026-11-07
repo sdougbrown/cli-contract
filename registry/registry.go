@@ -468,6 +468,8 @@ func buildTool(opts Options, timeout string, appName string, path []string, cmd 
 // result "json-pointer" and has no "none", so those two translate here, in the
 // one place that speaks both. An undeclared command keeps the envelope-carrying
 // default: the envelope stays authoritative, so every documented code decodes.
+// A declared command renders exactly what it stated: buildTool validated the
+// block, so a declared mode always carries its success codes.
 func manifestOutput(o clicontract.Output) map[string]any {
 	if o.Mode == "" {
 		return map[string]any{
@@ -489,11 +491,7 @@ func manifestOutput(o clicontract.Output) map[string]any {
 	if o.JSONPointer != "" {
 		out["json_pointer"] = o.JSONPointer
 	}
-	codes := o.SuccessExitCodes
-	if len(codes) == 0 {
-		codes = []int{0}
-	}
-	out["success_exit_codes"] = codes
+	out["success_exit_codes"] = o.SuccessExitCodes
 	return out
 }
 
