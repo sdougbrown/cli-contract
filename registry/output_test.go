@@ -83,8 +83,12 @@ func TestManifestOutputFollowsDeclaration(t *testing.T) {
 	if got := outputOf(t, app, "testcli-text")["mode"]; got != "raw" {
 		t.Errorf("text mode = %v, want raw", got)
 	}
-	if got := outputOf(t, app, "testcli-quiet")["mode"]; got != "raw" {
-		t.Errorf("quiet mode = %v, want raw: there is nothing to decode", got)
+	quiet := outputOf(t, app, "testcli-quiet")
+	if quiet["mode"] != "raw" {
+		t.Errorf("quiet mode = %v, want raw: there is nothing to decode", quiet["mode"])
+	}
+	if codes, ok := quiet["success_exit_codes"].([]any); !ok || len(codes) != 1 || codes[0] != float64(0) {
+		t.Errorf("quiet success codes = %v, want [0]", quiet["success_exit_codes"])
 	}
 
 	undeclared := outputOf(t, app, "testcli-undeclared")

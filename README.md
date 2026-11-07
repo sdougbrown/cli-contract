@@ -189,7 +189,10 @@ Optional extensions:
 ## Schema
 
 ```go
-doc := app.SchemaDocument()     // the whole document, ready to encode
+doc, err := app.SchemaDocument() // the whole document, ready to encode
+if err != nil {
+	return err // a malformed declaration fails here, not at encode time
+}
 schemas := app.Schemas()        // map[command name]CommandSchema
 common := app.CommonFlagSchemas()
 ```

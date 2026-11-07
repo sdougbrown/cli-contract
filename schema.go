@@ -1,5 +1,7 @@
 package clicontract
 
+import "time"
+
 // The schema derivation: one rendering of the declared command surface for
 // machine consumers. SchemaDocument wraps these entries into the document the
 // cli-contract spec describes; statuses, error codes, and envelope fields stay
@@ -39,32 +41,36 @@ type CommandSchema struct {
 	Subcommands    map[string]CommandSchema `json:"subcommands,omitempty"`
 }
 
+// urlPositional reports whether a positional list is the shape the envelope
+// contract calls a URL target: exactly one required positional.
+func urlPositional(positionals []Positional) bool {
+	return len(positionals) == 1 && positionals[0].Required
+}
+
 // hasURLPositional reports whether the command takes exactly one required
 // positional: the shape the envelope contract calls a URL target.
 func hasURLPositional(c *Command) bool {
-	return len(c.Positionals) == 1 && c.Positionals[0].Required
+	return urlPositional(c.Positionals)
 }
 
 // KindSchema names the value kind the schema document renders.
 func (k Kind) KindSchema() string {
-	switch k {
-	case Bool:
-		return "bool"
-	case Repeat:
-		return "repeat"
-	case Int:
-		return "integer"
-	case Duration:
-		return "duration"
-	default:
-		return "string"
+	for _, entry := range kindNames {
+		if entry.kind == k {
+			return entry.name
+		}
 	}
+	return "string"
 }
 
 // defaultOf is the flag's default: the declared Default when set, the
-// flag's zero value otherwise.
+// flag's zero value otherwise. A duration renders as its Go duration string so
+// a language-neutral document never carries Go's nanosecond count.
 func defaultOf(f Flag) any {
 	if f.Default != nil {
+		if d, ok := f.Default.(time.Duration); ok {
+			return d.String()
+		}
 		return f.Default
 	}
 	switch f.Kind {
@@ -72,6 +78,10 @@ func defaultOf(f Flag) any {
 		return false
 	case Repeat:
 		return []string{}
+	case Int:
+		return 0
+	case Duration:
+		return time.Duration(0).String()
 	default:
 		return ""
 	}
@@ -136,12 +146,15 @@ func (c *Command) Schema() CommandSchema {
 	}
 	if len(c.Subcommands) > 0 {
 		// A parent parses only its persistent flags and runs no leaf
-		// contract of its own.
+		// contract of its own. validate and the document walks reject a
+		// parent that declares the leaf-only members; the zeroing here keeps
+		// a direct Schemas() call — which validates nothing — from rendering
+		// leaf-only state into the wire.
 		entry.URL = false
-		entry.Flags = nil
 		entry.Positionals = nil
 		entry.NoInterspersed = false
 		entry.Output = nil
+		entry.Flags = nil
 		if len(c.PersistentFlags) > 0 {
 			// Subcommands inherit these; the parent's entry is where
 			// consumers look for them.
