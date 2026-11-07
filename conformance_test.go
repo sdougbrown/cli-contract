@@ -73,9 +73,14 @@ type conformanceAdapter struct {
 	modes  map[string]OutputMode
 	inv    Invocation
 	signal os.Signal
+	// dispatchCommand names the top-level command a failure resolved to
+	// before dispatch. No Invocation exists then, so the adapter reads the
+	// failing command's declared output mode from it.
+	dispatchCommand string
 }
 
 func (a *conformanceAdapter) ErrorResult(command string, err error) any {
+	a.dispatchCommand = command
 	code := "internal"
 	var usage *UsageError
 	if errors.As(err, &usage) {
@@ -105,10 +110,13 @@ func (a *conformanceAdapter) Write(w io.Writer, result any) error {
 }
 
 // mode reports the current command's declared output mode. A dispatch failure
-// never reaches Deadline, so no invocation is recorded and the error envelope
-// is written as JSON, the fixture app's own convention.
+// never reaches Deadline, so no Invocation is recorded and the failing
+// top-level command names the mode instead.
 func (a *conformanceAdapter) mode() OutputMode {
-	return a.modes[invocationPath(a.inv)]
+	if path := invocationPath(a.inv); path != "" {
+		return a.modes[path]
+	}
+	return a.modes[a.dispatchCommand]
 }
 
 func (a *conformanceAdapter) ExitCode(inv Invocation, result any, handlerErr error) int {
