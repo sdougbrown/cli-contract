@@ -1,0 +1,46 @@
+name: Consumer conformance
+
+# Checks real consumer CLIs against the specification the way cli-registry
+# would. Scheduled and manual only: an upstream change must not block this
+# repository's pull requests.
+#
+# This is a process-boundary check, not a module dependency. Each consumer is
+# built from its own go.mod at a pinned commit, so it links the cli-contract
+# version it already requires, while the checker is a separate binary built
+# here. No build graph edge, no import cycle, and a new adopter never has to be
+# added to this matrix for the library to keep working.
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '0 6 * * 1'
+
+jobs:
+  consumers:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - repo: sdougbrown/git-feedback
+            ref: 18b08f01d1d82343c953620bcb3543d3ddac2825
+            package: ./cmd/git-feedback
+          - repo: sdougbrown/avenor
+            ref: 8e5cb938a573f7d454536271557e65092bf55087
+            package: ./cmd/avenor
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.26'
+      - name: Build the checker
+        run: go build -o "$RUNNER_TEMP/cli-contract" ./cmd/cli-contract
+      - uses: actions/checkout@v4
+        with:
+          repository: ${{ matrix.repo }}
+          ref: ${{ matrix.ref }}
+          path: consumer
+      - name: Build the consumer
+        working-directory: consumer
+        run: go build -o "$RUNNER_TEMP/consumer" ${{ matrix.package }}
+      - name: Check
+        run: '"$RUNNER_TEMP/cli-contract" check "$RUNNER_TEMP/consumer"'
