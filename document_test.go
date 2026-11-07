@@ -181,10 +181,13 @@ func TestSchemaDocumentJSONShape(t *testing.T) {
 	if !ok {
 		t.Fatal("commands.fetch is not an object")
 	}
-	for _, key := range []string{"positionals", "no_interspersed", "input_rules", "output"} {
+	for _, key := range []string{"short", "long", "use", "url_positional", "positionals", "no_interspersed", "input_rules", "output"} {
 		if _, ok := fetch[key]; !ok {
 			t.Errorf("commands.fetch has no %q key", key)
 		}
+	}
+	if _, ok := fetch["subcommands"]; ok {
+		t.Error("commands.fetch renders subcommands on a leaf")
 	}
 	if _, ok := fetch["inputRules"]; ok {
 		t.Error("commands.fetch renders the camelCase \"inputRules\" key")
@@ -195,6 +198,26 @@ func TestSchemaDocumentJSONShape(t *testing.T) {
 	}
 	if _, ok := edit["availability"]; !ok {
 		t.Error("commands.edit has no \"availability\" key")
+	}
+	store, ok := commands["store"].(map[string]any)
+	if !ok {
+		t.Fatal("commands.store is not an object")
+	}
+	if _, ok := store["subcommands"]; !ok {
+		t.Error("commands.store has no \"subcommands\" key")
+	}
+	conditions, ok := doc["conditions"].(map[string]any)
+	if !ok {
+		t.Fatal("conditions is not an object")
+	}
+	readOnly, ok := conditions["read_only"].(map[string]any)
+	if !ok {
+		t.Fatal("conditions.read_only is not an object")
+	}
+	for _, key := range []string{"type", "description"} {
+		if _, ok := readOnly[key]; !ok {
+			t.Errorf("conditions.read_only has no %q key", key)
+		}
 	}
 	positionals, ok := fetch["positionals"].([]any)
 	if !ok || len(positionals) != 1 {
@@ -245,6 +268,20 @@ func TestSchemaDocumentHandlerOwnedSignals(t *testing.T) {
 	}
 	if !doc.HandlerOwnedSignals {
 		t.Error("handler_owned_signals not rendered")
+	}
+	b, err := json.Marshal(doc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var wire map[string]any
+	if err := json.Unmarshal(b, &wire); err != nil {
+		t.Fatal(err)
+	}
+	if got, ok := wire["handler_owned_signals"]; !ok || got != true {
+		t.Errorf("handler_owned_signals = %v (present: %v), want true", got, ok)
+	}
+	if _, ok := wire["signals"]; ok {
+		t.Error("handler-owned app renders the library's signal convention")
 	}
 }
 
