@@ -1,0 +1,285 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "cli-contract schema document v1",
+  "description": "The machine-readable surface and fixed behavior of a CLI built with cli-contract. Apps may add their own documented facts; every other member is closed so a typo cannot pass as a fact.",
+  "type": "object",
+  "required": ["schema", "commands"],
+  "additionalProperties": false,
+  "properties": {
+    "schema": {
+      "type": "string",
+      "minLength": 1,
+      "description": "The document's id. This library writes cli-contract/cli-schema/v1; an app that renders its own document keeps its own id."
+    },
+    "name": {
+      "type": "string",
+      "minLength": 1,
+      "description": "The binary name, the root of every command path."
+    },
+    "version": {
+      "type": "string",
+      "description": "The CLI version the --version convention reports."
+    },
+    "cli_version": {
+      "type": "string",
+      "description": "An app-supplied spelling of version. Either member may carry it; consumers read version first."
+    },
+    "docs": {
+      "type": "string",
+      "description": "A path or URL to the prose contract this document complements."
+    },
+    "typical_flow": {
+      "type": "array",
+      "items": { "type": "string", "minLength": 1 },
+      "description": "An app-supplied ordering of the commands a consumer usually drives in sequence."
+    },
+    "envelope": {
+      "type": "object",
+      "description": "An app-supplied description of its result envelope. The library never renders or interprets this."
+    },
+    "commands": {
+      "type": "object",
+      "minProperties": 1,
+      "additionalProperties": { "$ref": "#/definitions/command" },
+      "description": "Top-level commands keyed by name. Nested commands live under their parent's subcommands."
+    },
+    "common_flags": {
+      "type": "object",
+      "additionalProperties": { "$ref": "#/definitions/flag" },
+      "description": "Flags registered on every command, keyed by name."
+    },
+    "conditions": {
+      "type": "object",
+      "additionalProperties": { "$ref": "#/definitions/condition" },
+      "description": "The inputs a consumer supplies when it evaluates the app's availability rules, keyed by condition name."
+    },
+    "exit_codes": {
+      "type": "object",
+      "additionalProperties": { "type": "integer", "minimum": 0 },
+      "description": "The app's named exit vocabulary. The spec fixes 0 (ok), 1 (operational), and 2 (usage); an app declares any code it adds."
+    },
+    "signals": {
+      "type": "object",
+      "additionalProperties": { "type": "integer", "minimum": 0 },
+      "description": "Exit codes for terminating signals, keyed by signal name. The library writes SIGINT 130 and SIGTERM 143 unless the app owns signals."
+    },
+    "handler_owned_signals": {
+      "type": "boolean",
+      "description": "The app installs its own signal handlers and chooses the exit code, so the library's signal convention does not apply."
+    }
+  },
+  "definitions": {
+    "command": {
+      "type": "object",
+      "required": ["short", "use", "url_positional"],
+      "additionalProperties": false,
+      "description": "One command's declared surface. A command that owns subcommands carries its persistent flags under flags and declares no positionals of its own.",
+      "properties": {
+        "short": {
+          "type": "string",
+          "description": "The one-line help summary."
+        },
+        "long": {
+          "type": "string",
+          "description": "The extended help text."
+        },
+        "use": {
+          "type": "string",
+          "minLength": 1,
+          "description": "The help synopsis. Derived from positionals; positionals is the authoritative list."
+        },
+        "positionals": {
+          "type": "array",
+          "items": { "$ref": "#/definitions/positional" },
+          "description": "The positional arguments, in declaration order."
+        },
+        "url_positional": {
+          "type": "boolean",
+          "description": "The command takes exactly one required positional, the envelope contract's URL target. Derived from positionals."
+        },
+        "no_interspersed": {
+          "type": "boolean",
+          "description": "Flag parsing stops at the first positional, so later dashed tokens stay positionals."
+        },
+        "flags": {
+          "type": "object",
+          "additionalProperties": { "$ref": "#/definitions/flag" },
+          "description": "The command's own flags, or its persistent flags when it owns subcommands. Keyed by name."
+        },
+        "input_rules": {
+          "type": "array",
+          "items": { "$ref": "#/definitions/rule" },
+          "description": "Umpire rules over this command's flags: which combinations of inputs are legal."
+        },
+        "availability": {
+          "type": "array",
+          "items": { "$ref": "#/definitions/rule" },
+          "description": "Umpire rules over the document's conditions: whether a consumer offers this command at all."
+        },
+        "output": {
+          "$ref": "#/definitions/output"
+        },
+        "subcommands": {
+          "type": "object",
+          "minProperties": 1,
+          "additionalProperties": { "$ref": "#/definitions/command" },
+          "description": "Nested commands keyed by name."
+        }
+      }
+    },
+    "positional": {
+      "type": "object",
+      "required": ["name"],
+      "additionalProperties": false,
+      "properties": {
+        "name": { "type": "string", "minLength": 1 },
+        "required": { "type": "boolean" },
+        "variadic": { "type": "boolean" }
+      }
+    },
+    "flag": {
+      "type": "object",
+      "required": ["kind", "usage", "default"],
+      "additionalProperties": false,
+      "properties": {
+        "kind": {
+          "enum": ["string", "bool", "repeat", "integer", "duration"],
+          "description": "The value kind. repeat collects repeated values; integer parses base-10; duration parses a Go duration string."
+        },
+        "short": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 1,
+          "description": "The optional single-letter shorthand."
+        },
+        "usage": { "type": "string" },
+        "default": {
+          "type": ["string", "number", "boolean", "array"],
+          "description": "The value applied when the flag is absent. An integer carries a number, a duration its Go duration string, and a repeat an array of strings."
+        },
+        "required": {
+          "type": "boolean",
+          "description": "The caller must supply the flag; the parser rejects an invocation without it."
+        }
+      }
+    },
+    "output": {
+      "type": "object",
+      "required": ["mode"],
+      "additionalProperties": false,
+      "description": "How the command's stdout is decoded and which exit codes mean success. A command that declares no output mode declares nothing.",
+      "properties": {
+        "mode": {
+          "enum": ["json", "raw", "none"],
+          "description": "json writes one JSON value, raw writes bytes the consumer must not decode as JSON, none writes nothing."
+        },
+        "json_pointer": {
+          "type": "string",
+          "pattern": "^/",
+          "description": "An RFC 6901 pointer to the result inside the JSON value. Only meaningful for json mode."
+        },
+        "success_exit_codes": {
+          "type": "array",
+          "items": { "type": "integer", "minimum": 0, "maximum": 255 },
+          "uniqueItems": true,
+          "description": "The exit codes that mean success. Required when a mode is declared: a declared block publishes exactly the codes its author stated, never a default the renderer invented."
+        }
+      },
+      "allOf": [
+        {
+          "if": { "required": ["json_pointer"] },
+          "then": { "properties": { "mode": { "const": "json" } } }
+        },
+        {
+          "if": { "required": ["mode"] },
+          "then": { "required": ["success_exit_codes"] }
+        }
+      ]
+    },
+    "condition": {
+      "type": "object",
+      "required": ["type"],
+      "additionalProperties": false,
+      "properties": {
+        "type": {
+          "enum": ["boolean", "string", "number", "string[]", "number[]"],
+          "description": "The condition's value type, matching the Umpire v1 condition types."
+        },
+        "description": {
+          "type": "string",
+          "description": "What the input means, for the consumer."
+        }
+      }
+    },
+    "rule": {
+      "type": "object",
+      "required": ["type"],
+      "additionalProperties": false,
+      "properties": {
+        "type": {
+          "enum": ["enabledWhen", "requires", "disables", "anyOf", "eitherOf"]
+        },
+        "field": {
+          "type": "string",
+          "minLength": 1,
+          "description": "The rule's subject: a tool name in availability, a flag name in input rules. Absent gates the declaring command's own tool."
+        },
+        "targets": {
+          "type": "array",
+          "items": { "type": "string", "minLength": 1 }
+        },
+        "group": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Names an eitherOf rule."
+        },
+        "when": { "$ref": "#/definitions/expr" },
+        "reason": { "type": "string" },
+        "rules": {
+          "type": "array",
+          "items": { "$ref": "#/definitions/rule" }
+        },
+        "branches": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "array",
+            "items": { "$ref": "#/definitions/rule" }
+          }
+        }
+      }
+    },
+    "expr": {
+      "type": "object",
+      "required": ["op"],
+      "additionalProperties": false,
+      "properties": {
+        "op": {
+          "enum": [
+            "cond",
+            "condEq",
+            "condIn",
+            "and",
+            "or",
+            "not",
+            "present",
+            "absent",
+            "truthy",
+            "falsy",
+            "eq",
+            "in",
+            "notIn"
+          ]
+        },
+        "field": { "type": "string", "minLength": 1 },
+        "condition": { "type": "string", "minLength": 1 },
+        "value": {},
+        "values": { "type": "array" },
+        "exprs": {
+          "type": "array",
+          "items": { "$ref": "#/definitions/expr" }
+        },
+        "expr": { "$ref": "#/definitions/expr" }
+      }
+    }
+  }
+}
