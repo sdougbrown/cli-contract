@@ -92,11 +92,11 @@ func app() *clicontract.App {
 				Output: clicontract.Output{Mode: clicontract.OutputJSON, SuccessExitCodes: []int{0}},
 				Handle: func(ctx context.Context, inv clicontract.Invocation, _ io.Writer) (any, error) {
 					target := inv.Args
-					doc, err := check.LoadDocument(target, inv.Flags["schema-file"], inv.Flags["schema-command"])
+					doc, err := check.LoadDocument(ctx, target, inv.Flags["schema-file"], inv.Flags["schema-command"])
 					if err != nil {
 						return nil, &clicontract.UsageError{Message: err.Error()}
 					}
-					results, err := check.Run(target, check.Derive(doc))
+					results, err := check.Run(ctx, target, check.Derive(doc))
 					if err != nil {
 						return nil, &clicontract.UsageError{Message: err.Error()}
 					}

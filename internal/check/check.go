@@ -150,27 +150,33 @@ func hasRequiredPositional(cmd clicontract.CommandSchema) bool {
 }
 
 // Run executes every case against target. target is the binary plus any fixed
-// arguments; each case's argv is appended to it.
-func Run(target []string, cases []Case) ([]Result, error) {
-	return run(target, cases, caseTimeout)
+// arguments; each case's argv is appended to it. Cancelling ctx kills the case
+// in flight and aborts the run; a case that outlives caseTimeout is a failed
+// case, not an aborted run.
+func Run(ctx context.Context, target []string, cases []Case) ([]Result, error) {
+	return run(ctx, target, cases, caseTimeout)
 }
 
 // run is Run under a caller-chosen per-case timeout.
-func run(target []string, cases []Case, timeout time.Duration) ([]Result, error) {
+func run(ctx context.Context, target []string, cases []Case, timeout time.Duration) ([]Result, error) {
 	if len(target) == 0 {
 		return nil, errors.New("check: no target binary")
 	}
 	results := make([]Result, 0, len(cases))
 	for _, c := range cases {
 		argv := append(append([]string{}, target...), c.Argv...)
-		ctx, cancel := context.WithTimeout(context.Background(), timeout)
+		caseCtx, cancel := context.WithTimeout(ctx, timeout)
 		var stdout, stderr bytes.Buffer
-		cmd := exec.CommandContext(ctx, argv[0], argv[1:]...)
+		cmd := exec.CommandContext(caseCtx, argv[0], argv[1:]...)
 		cmd.Stdout, cmd.Stderr = &stdout, &stderr
 		cmd.WaitDelay = pipeGrace
 		err := cmd.Run()
-		timedOut := ctx.Err() == context.DeadlineExceeded
+		parentErr := ctx.Err()
+		timedOut := parentErr == nil && caseCtx.Err() == context.DeadlineExceeded
 		cancel()
+		if parentErr != nil {
+			return nil, fmt.Errorf("check: run %s: %w", strings.Join(argv, " "), parentErr)
+		}
 		got := Got{Stdout: stdout.String(), Stderr: stderr.String()}
 		if timedOut {
 			got.Exit = timedOutExit
@@ -221,13 +227,14 @@ func checkClass(stream, class, got string) (bool, string) {
 }
 
 // LoadDocument reads the target's schema document, either from a file or by
-// running the target's schema command.
-func LoadDocument(target []string, schemaFile, schemaCommand string) (*clicontract.SchemaDocument, error) {
-	return loadDocument(target, schemaFile, schemaCommand, schemaTimeout)
+// running the target's schema command. Cancelling ctx kills the schema command
+// in flight and aborts the load.
+func LoadDocument(ctx context.Context, target []string, schemaFile, schemaCommand string) (*clicontract.SchemaDocument, error) {
+	return loadDocument(ctx, target, schemaFile, schemaCommand, schemaTimeout)
 }
 
 // loadDocument is LoadDocument under a caller-chosen schema-command timeout.
-func loadDocument(target []string, schemaFile, schemaCommand string, timeout time.Duration) (*clicontract.SchemaDocument, error) {
+func loadDocument(ctx context.Context, target []string, schemaFile, schemaCommand string, timeout time.Duration) (*clicontract.SchemaDocument, error) {
 	if schemaFile != "" {
 		data, err := os.ReadFile(schemaFile)
 		if err != nil {
@@ -239,14 +246,17 @@ func loadDocument(target []string, schemaFile, schemaCommand string, timeout tim
 		return nil, errors.New("check: no target binary")
 	}
 	argv := append(append([]string{}, target...), schemaCommand)
-	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	cmdCtx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
-	cmd := exec.CommandContext(ctx, argv[0], argv[1:]...)
+	cmd := exec.CommandContext(cmdCtx, argv[0], argv[1:]...)
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr
 	cmd.WaitDelay = pipeGrace
 	out, err := cmd.Output()
-	if ctx.Err() == context.DeadlineExceeded {
+	if ctxErr := ctx.Err(); ctxErr != nil {
+		return nil, fmt.Errorf("check: %s: %w", strings.Join(argv, " "), ctxErr)
+	}
+	if cmdCtx.Err() == context.DeadlineExceeded {
 		return nil, fmt.Errorf("check: %s timed out after %s", strings.Join(argv, " "), timeout)
 	}
 	if err != nil {

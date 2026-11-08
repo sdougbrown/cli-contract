@@ -1,6 +1,8 @@
 package check
 
 import (
+	"context"
+	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -110,7 +112,7 @@ func TestRunTimesOut(t *testing.T) {
 		t.Skip("no sleep(1) on this platform")
 	}
 	cases := []Case{{ID: "hang:root", Argv: []string{"5"}, Want: Want{Exit: 0}}}
-	results, err := run([]string{sleep}, cases, 100*time.Millisecond)
+	results, err := run(context.Background(), []string{sleep}, cases, 100*time.Millisecond)
 	if err != nil {
 		t.Fatalf("run: %v", err)
 	}
@@ -142,7 +144,7 @@ func TestRunTimesOutForkedChild(t *testing.T) {
 	}
 	cases := []Case{{ID: "fork:root", Argv: []string{"-c", "sleep 5 & exit 0"}, Want: Want{Exit: 0}}}
 	start := time.Now()
-	results, err := run([]string{sh}, cases, 100*time.Millisecond)
+	results, err := run(context.Background(), []string{sh}, cases, 100*time.Millisecond)
 	elapsed := time.Since(start)
 	if err != nil {
 		t.Fatalf("run: %v", err)
@@ -165,6 +167,35 @@ func TestRunTimesOutForkedChild(t *testing.T) {
 	}
 }
 
+// TestRunStopsOnCancellation pins the signal path: a cancelled parent context
+// kills the case in flight and aborts the run, instead of letting the target
+// run out its per-case timeout before the caller can exit.
+func TestRunStopsOnCancellation(t *testing.T) {
+	sleep, err := exec.LookPath("sleep")
+	if err != nil {
+		t.Skip("no sleep(1) on this platform")
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	cases := []Case{{ID: "hang:root", Argv: []string{"30"}, Want: Want{Exit: 0}}}
+	go func() {
+		time.Sleep(100 * time.Millisecond)
+		cancel()
+	}()
+	start := time.Now()
+	results, err := run(ctx, []string{sleep}, cases, time.Minute)
+	elapsed := time.Since(start)
+	if err == nil {
+		t.Fatalf("run returned %d results after cancellation, want an error", len(results))
+	}
+	if !errors.Is(err, context.Canceled) {
+		t.Errorf("error = %q, want a cancellation", err)
+	}
+	if elapsed >= 5*time.Second {
+		t.Errorf("run took %s after cancellation; want well under the per-case timeout", elapsed)
+	}
+}
+
 // TestLoadDocumentTimesOut pins the schema-command hang path: a command
 // killed at the deadline has no observed exit, so the error must say it timed
 // out rather than report a made-up exit code.
@@ -173,7 +204,7 @@ func TestLoadDocumentTimesOut(t *testing.T) {
 	if err != nil {
 		t.Skip("no sleep(1) on this platform")
 	}
-	_, err = loadDocument([]string{sleep}, "", "5", 100*time.Millisecond)
+	_, err = loadDocument(context.Background(), []string{sleep}, "", "5", 100*time.Millisecond)
 	if err == nil {
 		t.Fatal("a timed-out schema command produced no error")
 	}
@@ -195,7 +226,7 @@ func TestLoadDocumentReportsStderr(t *testing.T) {
 	if err := os.WriteFile(script, []byte("printf '%s\\n' '"+diagnostic+"' >&2; exit 3\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	_, err = loadDocument([]string{sh, script}, "", "", time.Second)
+	_, err = loadDocument(context.Background(), []string{sh, script}, "", "", time.Second)
 	if err == nil {
 		t.Fatal("a failing schema command produced no error")
 	}
