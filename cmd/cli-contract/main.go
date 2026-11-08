@@ -20,6 +20,7 @@ import (
 
 	"github.com/sdougbrown/cli-contract"
 	"github.com/sdougbrown/cli-contract/internal/check"
+	"github.com/sdougbrown/cli-contract/internal/envelope"
 )
 
 // version is the checker's own version line; release builds set it.
@@ -47,11 +48,7 @@ func (adapter) ErrorResult(command string, err error) any {
 	case errors.As(err, &usage):
 		code = "usage"
 	}
-	return map[string]any{
-		"command": command,
-		"status":  "error",
-		"error":   map[string]any{"code": code, "message": err.Error()},
-	}
+	return envelope.Error(command, code, err)
 }
 
 func (adapter) Write(w io.Writer, result any) error {

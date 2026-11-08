@@ -6,11 +6,13 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"reflect"
 	"slices"
 	"testing"
 
 	"github.com/sdougbrown/cli-contract"
 	"github.com/sdougbrown/cli-contract/internal/check"
+	"github.com/sdougbrown/cli-contract/internal/envelope"
 )
 
 // buildChecker builds this command into a temporary directory.
@@ -61,14 +63,42 @@ type errorEnvelope struct {
 	} `json:"error"`
 }
 
-// decodeErrorEnvelope decodes a failure envelope.
+// decodeErrorEnvelope decodes a failure envelope and pins its members to the
+// shared builder's shape, so a renamed or added member fails at the wire
+// boundary a consumer reads.
 func decodeErrorEnvelope(t *testing.T, out []byte) errorEnvelope {
 	t.Helper()
 	var env errorEnvelope
 	if err := json.Unmarshal(out, &env); err != nil {
 		t.Fatalf("decode error envelope (%q): %v", out, err)
 	}
+	var raw map[string]any
+	if err := json.Unmarshal(out, &raw); err != nil {
+		t.Fatalf("decode error envelope (%q): %v", out, err)
+	}
+	want := envelope.Error("", "", errors.New(""))
+	assertEnvelopeMembers(t, "error envelope", raw, want)
+	if errObj, ok := raw["error"].(map[string]any); ok {
+		if wantErr, ok := want["error"].(map[string]any); ok {
+			assertEnvelopeMembers(t, "error envelope error member", errObj, wantErr)
+		}
+	}
 	return env
+}
+
+// assertEnvelopeMembers checks that got declares exactly the members want does.
+func assertEnvelopeMembers(t *testing.T, name string, got, want map[string]any) {
+	t.Helper()
+	for member := range got {
+		if _, ok := want[member]; !ok {
+			t.Errorf("%s carries unexpected member %q", name, member)
+		}
+	}
+	for member := range want {
+		if _, ok := got[member]; !ok {
+			t.Errorf("%s is missing member %q", name, member)
+		}
+	}
 }
 
 // buildFixture builds the stub target the schema-command tests run against.
@@ -102,9 +132,9 @@ func writeTargetDocument(t *testing.T) string {
 	return doc
 }
 
-// TestAdapterErrorCodes pins the envelope split the reference adapters use:
-// a caller mistake is a usage error, while a broken target and any other
-// failure are not.
+// TestAdapterErrorCodes pins the full failure envelope the checker writes,
+// built by the shared builder the fixture runner uses too: a caller mistake is
+// a usage error, while a broken target and any other failure are not.
 func TestAdapterErrorCodes(t *testing.T) {
 	cases := []struct {
 		name string
@@ -116,16 +146,13 @@ func TestAdapterErrorCodes(t *testing.T) {
 		{name: "internal", err: errors.New("boom"), want: "internal"},
 	}
 	for _, c := range cases {
-		env, ok := adapter{}.ErrorResult("check", c.err).(map[string]any)
+		result := adapter{}.ErrorResult("check", c.err)
+		got, ok := result.(map[string]any)
 		if !ok {
-			t.Fatalf("%s: ErrorResult returned %T, want map[string]any", c.name, adapter{}.ErrorResult("check", c.err))
+			t.Fatalf("%s: ErrorResult returned %T, want map[string]any", c.name, result)
 		}
-		errObj, ok := env["error"].(map[string]any)
-		if !ok {
-			t.Fatalf("%s: error member = %T, want map[string]any", c.name, env["error"])
-		}
-		if code, _ := errObj["code"].(string); code != c.want {
-			t.Errorf("%s: code = %q, want %q", c.name, code, c.want)
+		if want := envelope.Error("check", c.want, c.err); !reflect.DeepEqual(got, want) {
+			t.Errorf("%s: envelope = %#v, want %#v", c.name, got, want)
 		}
 	}
 }

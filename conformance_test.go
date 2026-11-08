@@ -24,6 +24,7 @@ import (
 	"syscall"
 	"testing"
 
+	"github.com/sdougbrown/cli-contract/internal/envelope"
 	"github.com/sdougbrown/cli-contract/internal/streamclass"
 )
 
@@ -80,11 +81,7 @@ func (a *conformanceAdapter) ErrorResult(command string, err error) any {
 	if errors.As(err, &usage) {
 		code = "usage"
 	}
-	return map[string]any{
-		"command": command,
-		"status":  "error",
-		"error":   map[string]any{"code": code, "message": err.Error()},
-	}
+	return envelope.Error(command, code, err)
 }
 
 func (a *conformanceAdapter) Write(w io.Writer, result any) error {
@@ -142,6 +139,30 @@ func (a *conformanceAdapter) PendingSignal() (os.Signal, bool) {
 
 var _ Adapter = (*conformanceAdapter)(nil)
 var _ TestSeams = (*conformanceAdapter)(nil)
+
+// TestConformanceAdapterEnvelope pins the fixture runner's failure envelope to
+// the shared builder; the checker's own test pins its adapter the same way, so
+// an envelope change cannot reach one producer and miss the other.
+func TestConformanceAdapterEnvelope(t *testing.T) {
+	cases := []struct {
+		name string
+		err  error
+		want string
+	}{
+		{name: "usage", err: &UsageError{Message: "bad schema file"}, want: "usage"},
+		{name: "internal", err: errors.New("boom"), want: "internal"},
+	}
+	for _, c := range cases {
+		result := (&conformanceAdapter{}).ErrorResult("probe", c.err)
+		got, ok := result.(map[string]any)
+		if !ok {
+			t.Fatalf("%s: ErrorResult returned %T, want map[string]any", c.name, result)
+		}
+		if want := envelope.Error("probe", c.want, c.err); !reflect.DeepEqual(got, want) {
+			t.Errorf("%s: envelope = %#v, want %#v", c.name, got, want)
+		}
+	}
+}
 
 // invocationPath is the full command path of one invocation, the key both the
 // document and the handler map use.
