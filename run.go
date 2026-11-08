@@ -43,7 +43,7 @@ func Run(app *App, adapter Adapter, argv []string, stdout, stderr io.Writer) int
 		// envelope and exit 2.
 		raised := err
 		err = asUsageError(err)
-		adapter.Write(stdout, adapter.ErrorResult(command, err))
+		adapter.Write(stdout, adapter.ErrorResult(exec.errorCommand(command), err))
 		if exec.ran || exec.rawRan {
 			// A dispatched command owns the failure — a Validate rejection
 			// or a raw-output command's error — so the handler-diagnostic

@@ -1,7 +1,7 @@
 {
   "fixtureVersion": 1,
   "id": "declared-output",
-  "description": "A command writes stdout as its output.mode declares: one JSON value, plain text, or nothing.",
+  "description": "A command writes stdout as its output.mode declares on every outcome: one JSON value, plain text, or nothing, on success and on a dispatch failure.",
   "document": {
     "schema": "cli-contract/cli-schema/v1",
     "name": "fixture",
@@ -23,6 +23,19 @@
         "use": "emit-none",
         "url_positional": false,
         "output": { "mode": "none", "success_exit_codes": [0] }
+      },
+      "store": {
+        "short": "store utilities",
+        "use": "store",
+        "url_positional": false,
+        "subcommands": {
+          "clear": {
+            "short": "write nothing below a parent command",
+            "use": "clear",
+            "url_positional": false,
+            "output": { "mode": "none", "success_exit_codes": [0] }
+          }
+        }
       }
     },
     "common_flags": {}
@@ -46,6 +59,33 @@
       "id": "nothing",
       "argv": ["emit-none"],
       "expect": { "exit": 0, "stdout": { "class": "empty" }, "stderr": { "class": "empty" } }
+    },
+    {
+      "id": "nothing-on-dispatch-failure",
+      "argv": ["emit-none", "--nope"],
+      "expect": {
+        "exit": 2,
+        "stdout": { "class": "empty" },
+        "stderr": { "class": "prefix", "text": "emit-none:" }
+      }
+    },
+    {
+      "id": "plain-text-on-dispatch-failure",
+      "argv": ["emit-raw", "--nope"],
+      "expect": {
+        "exit": 2,
+        "stdout": { "class": "plain-text" },
+        "stderr": { "class": "prefix", "text": "emit-raw:" }
+      }
+    },
+    {
+      "id": "nothing-on-nested-dispatch-failure",
+      "argv": ["store", "clear", "--nope"],
+      "expect": {
+        "exit": 2,
+        "stdout": { "class": "empty" },
+        "stderr": { "class": "prefix", "text": "store clear:" }
+      }
     }
   ]
 }

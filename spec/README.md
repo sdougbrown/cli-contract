@@ -141,8 +141,10 @@ invocation for a result command (`{"command", "path", "args", "flags",
 "bools", "ints", "supplied"}`), returns text for a `raw` command, and returns
 nothing for a `none` command. Its adapter writes stdout as the document's
 `output.mode` declares, on every outcome: a dispatch failure on a `none`
-command writes nothing, and on a `json` command writes the error envelope. A port may choose its own handlers, but it must honor
-the same declaration.
+command writes nothing, on a `raw` command writes text, and on a `json`
+command writes the error envelope. A port may choose its own handlers, but it
+must honor the same declaration, applying the mode declared for the command
+path the failure resolved to.
 
 ### Writing a port runner
 

@@ -73,14 +73,20 @@ type conformanceAdapter struct {
 	modes  map[string]OutputMode
 	inv    Invocation
 	signal os.Signal
-	// dispatchCommand names the top-level command a failure resolved to
-	// before dispatch. No Invocation exists then, so the adapter reads the
-	// failing command's declared output mode from it.
-	dispatchCommand string
+	// failedCommand is the command ErrorResult reported: the full declared
+	// path of the command a failure resolved to, or the top-level argv token
+	// when it matched no declared command. A failure before dispatch records
+	// no Invocation, so the declared output mode is read from this path then.
+	failedCommand string
 }
 
 func (a *conformanceAdapter) ErrorResult(command string, err error) any {
-	a.dispatchCommand = command
+	a.failedCommand = command
+	// A raw command's stdout is text or bytes on a failure too; an error
+	// envelope is not its vocabulary.
+	if a.modes[command] == OutputRaw {
+		return err.Error()
+	}
 	code := "internal"
 	var usage *UsageError
 	if errors.As(err, &usage) {
@@ -109,14 +115,14 @@ func (a *conformanceAdapter) Write(w io.Writer, result any) error {
 	return err
 }
 
-// mode reports the current command's declared output mode. A dispatch failure
-// never reaches Deadline, so no Invocation is recorded and the failing
-// top-level command names the mode instead.
+// mode reports the current command's declared output mode. A failure before
+// dispatch never reaches Deadline, so no Invocation is recorded and the path
+// ErrorResult reported names the mode instead.
 func (a *conformanceAdapter) mode() OutputMode {
-	if path := invocationPath(a.inv); path != "" {
+	if path := invocationCommandPath(a.inv); path != "" {
 		return a.modes[path]
 	}
-	return a.modes[a.dispatchCommand]
+	return a.modes[a.failedCommand]
 }
 
 func (a *conformanceAdapter) ExitCode(inv Invocation, result any, handlerErr error) int {
@@ -170,18 +176,6 @@ func TestConformanceAdapterEnvelope(t *testing.T) {
 			t.Errorf("%s: envelope = %#v, want %#v", c.name, got, want)
 		}
 	}
-}
-
-// invocationPath is the full command path of one invocation, the key both the
-// document and the handler map use.
-func invocationPath(inv Invocation) string {
-	if inv.Command == "" {
-		return ""
-	}
-	if len(inv.Path) == 0 {
-		return inv.Command
-	}
-	return inv.Command + " " + strings.Join(inv.Path, " ")
 }
 
 // conformanceModes indexes every leaf's declared output mode by command path.
