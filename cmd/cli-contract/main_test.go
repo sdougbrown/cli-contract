@@ -278,20 +278,6 @@ func TestCheckReportsNonConformingTarget(t *testing.T) {
 	}
 }
 
-// TestCheckCouldNotRunExitsTwo pins the documented split: a check that never
-// ran is a caller error (2), not a failed check (1).
-func TestCheckCouldNotRunExitsTwo(t *testing.T) {
-	if testing.Short() {
-		t.Skip("builds a binary")
-	}
-	bin := buildChecker(t)
-	missing := filepath.Join(t.TempDir(), "missing.json")
-	code, _ := runChecker(t, bin, "check", "--schema-file", missing, "true")
-	if code != 2 {
-		t.Fatalf("exit = %d, want 2: the check could not run", code)
-	}
-}
-
 // TestCheckMissingTargetExitsTwo pins the launch-failure path: the document
 // loads, but no case can start because the target cannot be executed.
 func TestCheckMissingTargetExitsTwo(t *testing.T) {

@@ -71,6 +71,21 @@ func TestDeriveNestedSubcommandPaths(t *testing.T) {
 	}
 }
 
+// TestDeriveSkipsOptionalPositionals pins that only a required positional
+// produces a missing-positional case: a leaf whose positionals are all
+// optional judges conforming without one.
+func TestDeriveSkipsOptionalPositionals(t *testing.T) {
+	doc := nestedDoc()
+	reset := doc.Commands["store"].Subcommands["reset"]
+	reset.Positionals = []clicontract.Positional{{Name: "TARGET"}}
+	doc.Commands["store"].Subcommands["reset"] = reset
+	for _, c := range Derive(doc) {
+		if strings.Contains(c.ID, "missing-positional") {
+			t.Errorf("Derive emitted %q for a leaf whose positionals are all optional", c.ID)
+		}
+	}
+}
+
 // TestDeriveVersionLine pins the version branch: a document declaring a
 // version requires a --version case that prints something, and a document
 // without one must not invent that case.
