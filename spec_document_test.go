@@ -84,6 +84,7 @@ func TestSchemaDocumentMatchesTheSpec(t *testing.T) {
 	facts["typical_flow"] = []string{"fetch first, then edit"}
 	facts["cli_version"] = "1.2.3"
 	facts["envelope"] = map[string]any{"ok": true}
+	facts["exit_codes"] = map[string]any{"build-failed": 31}
 	if err := validateDocument(t, facts); err != nil {
 		t.Fatalf("document with reserved app facts does not satisfy the spec:\n%v", err)
 	}
@@ -143,10 +144,120 @@ func TestSpecSchemaRejectsNonConformingDocuments(t *testing.T) {
 			},
 		},
 		{
+			name: "empty subcommands object",
+			mutate: func(doc map[string]any) {
+				storeCmd := commandMember(t, doc, "store").(map[string]any)
+				storeCmd["subcommands"] = map[string]any{}
+			},
+		},
+		{
 			name: "pointer outside json output",
 			mutate: func(doc map[string]any) {
 				output := commandMember(t, doc, "edit", "output").(map[string]any)
 				output["json_pointer"] = "/status"
+			},
+		},
+		{
+			// The per-kind default constraints: a duration default is a Go
+			// duration string, not a number — the reference apply path rejects
+			// what the type split now rejects too.
+			name: "duration default carries a number",
+			mutate: func(doc map[string]any) {
+				flag := commandMember(t, doc, "fetch", "flags", "timeout").(map[string]any)
+				flag["default"] = 5
+			},
+		},
+		{
+			// multipleOf 1 pins the whole-number rule for integer defaults.
+			name: "integer default carries a fraction",
+			mutate: func(doc map[string]any) {
+				flag := commandMember(t, doc, "fetch", "flags", "depth").(map[string]any)
+				flag["default"] = 2.5
+			},
+		},
+		{
+			name: "repeat default carries a non-string item",
+			mutate: func(doc map[string]any) {
+				flag := commandMember(t, doc, "fetch", "flags", "tags").(map[string]any)
+				flag["default"] = []any{"draft", 7}
+			},
+		},
+		{
+			// The per-kind rule constraints: the schema must reject what the
+			// reference apply path rejects (validateRule), so a hand-written
+			// rule the validator accepts but the walk would reject cannot
+			// masquerade as a conforming document.
+			name: "enabledWhen rule without a condition",
+			mutate: func(doc map[string]any) {
+				inputRule(t, doc, map[string]any{"type": "enabledWhen", "field": "depth"})
+			},
+		},
+		{
+			name: "requires rule without a condition",
+			mutate: func(doc map[string]any) {
+				inputRule(t, doc, map[string]any{"type": "requires", "field": "depth"})
+			},
+		},
+		{
+			name: "disables rule without a condition",
+			mutate: func(doc map[string]any) {
+				inputRule(t, doc, map[string]any{"type": "disables", "targets": []any{"depth"}})
+			},
+		},
+		{
+			name: "disables rule without targets",
+			mutate: func(doc map[string]any) {
+				inputRule(t, doc, map[string]any{"type": "disables", "when": map[string]any{"op": "present", "field": "depth"}})
+			},
+		},
+		{
+			name: "disables rule with empty targets",
+			mutate: func(doc map[string]any) {
+				inputRule(t, doc, map[string]any{"type": "disables", "when": map[string]any{"op": "present", "field": "depth"}, "targets": []any{}})
+			},
+		},
+		{
+			name: "anyOf rule without rules",
+			mutate: func(doc map[string]any) {
+				inputRule(t, doc, map[string]any{"type": "anyOf"})
+			},
+		},
+		{
+			name: "anyOf rule with empty rules",
+			mutate: func(doc map[string]any) {
+				inputRule(t, doc, map[string]any{"type": "anyOf", "rules": []any{}})
+			},
+		},
+		{
+			name: "eitherOf rule without a group",
+			mutate: func(doc map[string]any) {
+				inputRule(t, doc, map[string]any{"type": "eitherOf", "branches": map[string]any{"mode": []any{map[string]any{"type": "enabledWhen", "when": map[string]any{"op": "truthy", "field": "depth"}}}}})
+			},
+		},
+		{
+			name: "eitherOf rule without branches",
+			mutate: func(doc map[string]any) {
+				inputRule(t, doc, map[string]any{"type": "eitherOf", "group": "mode"})
+			},
+		},
+		{
+			name: "eitherOf rule with empty branches",
+			mutate: func(doc map[string]any) {
+				inputRule(t, doc, map[string]any{"type": "eitherOf", "group": "mode", "branches": map[string]any{}})
+			},
+		},
+		{
+			// The exit_codes fact is the spec's named-exit-codes surface: the
+			// values must stay whole non-negative integers.
+			name: "exit codes fact carries a string",
+			mutate: func(doc map[string]any) {
+				doc["exit_codes"] = map[string]any{"build-failed": "31"}
+			},
+		},
+		{
+			name: "exit codes fact carries a negative code",
+			mutate: func(doc map[string]any) {
+				doc["exit_codes"] = map[string]any{"build-failed": -1}
 			},
 		},
 	}
@@ -170,6 +281,14 @@ func TestSpecSchemaRejectsNonConformingDocuments(t *testing.T) {
 			}
 		})
 	}
+}
+
+// inputRule installs one hand-written rule as fetch's only input rule, so a
+// case can hand the schema a rule the reference walk would reject.
+func inputRule(t *testing.T, doc map[string]any, body map[string]any) {
+	t.Helper()
+	fetch := commandMember(t, doc, "fetch").(map[string]any)
+	fetch["input_rules"] = []any{body}
 }
 
 // commandMember walks commands.<command>.<key> and returns the value, failing

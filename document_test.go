@@ -240,6 +240,8 @@ func TestSchemaDocumentCoversTheSpecVocabulary(t *testing.T) {
 					RequiresOn("depth", And(Present("depth"), Or(Eq("label", "x"), In("tags", "a", "b"))), "depth needs a label"),
 					RequiresOn("label", Not(Absent("label")), "a label is required"),
 					RequiresOn("tags", NotIn("tags", "banned"), "no banned tags"),
+					RequiresOn("depth", Truthy("depth"), "a set depth is truthy"),
+					RequiresOn("tags", Falsy("tags"), "empty tags are falsy"),
 				},
 				Output: Output{Mode: OutputJSON, SuccessExitCodes: []int{0}},
 				Handle: func(ctx context.Context, inv Invocation, _ io.Writer) (any, error) {

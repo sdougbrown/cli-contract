@@ -37,27 +37,27 @@ func TestManifestOutputFollowsDeclaration(t *testing.T) {
 		Name: "testcli",
 		Commands: []*clicontract.Command{
 			{
-				Name:   "plain",
+				Name: "plain", Handle: noopHandle,
 				Short:  "one JSON value",
 				Output: clicontract.Output{Mode: clicontract.OutputJSON, SuccessExitCodes: []int{0}},
 			},
 			{
-				Name:   "field",
+				Name: "field", Handle: noopHandle,
 				Short:  "one JSON value, one field",
 				Output: clicontract.Output{Mode: clicontract.OutputJSON, JSONPointer: "/status", SuccessExitCodes: []int{0}},
 			},
 			{
-				Name:   "text",
+				Name: "text", Handle: noopHandle,
 				Short:  "raw text",
 				Output: clicontract.Output{Mode: clicontract.OutputRaw, SuccessExitCodes: []int{0}},
 			},
 			{
-				Name:   "quiet",
+				Name: "quiet", Handle: noopHandle,
 				Short:  "no output",
 				Output: clicontract.Output{Mode: clicontract.OutputNone, SuccessExitCodes: []int{0}},
 			},
 			{
-				Name:  "undeclared",
+				Name: "undeclared", Handle: noopHandle,
 				Short: "keeps the bridge default",
 			},
 		},
@@ -101,6 +101,22 @@ func TestManifestOutputFollowsDeclaration(t *testing.T) {
 	}
 }
 
+// TestManifestRequiresRunnableCommands pins the shared-walk guarantee: the
+// manifest renders a declaration that can run, so a leaf without exactly one
+// of Handle/Raw/Stream is rejected like the tree rejects it.
+func TestManifestRequiresRunnableCommands(t *testing.T) {
+	app := &clicontract.App{
+		Name: "testcli",
+		Commands: []*clicontract.Command{
+			{Name: "ghost", Short: "a command that can never run"},
+		},
+	}
+	_, err := Manifest(app, Options{Binary: "testcli"})
+	if err == nil || !strings.Contains(err.Error(), "must declare exactly one of Handle, Raw, or Stream") {
+		t.Fatalf("err = %v, want the handler-less rejection", err)
+	}
+}
+
 // TestManifestRejectsMalformedOutput pins the direct entry point: Manifest
 // renders the declaration without building a tree, so it must run the same
 // output check Run and Tree run.
@@ -108,7 +124,7 @@ func TestManifestRejectsMalformedOutput(t *testing.T) {
 	app := &clicontract.App{
 		Name: "testcli",
 		Commands: []*clicontract.Command{
-			{Name: "bad", Short: "bad output", Output: clicontract.Output{Mode: "yaml"}},
+			{Name: "bad", Handle: noopHandle, Short: "bad output", Output: clicontract.Output{Mode: "yaml"}},
 		},
 	}
 	_, err := Manifest(app, Options{Binary: "testcli"})
@@ -124,7 +140,7 @@ func TestManifestRejectsMalformedOutput(t *testing.T) {
 				Short:  "store utilities",
 				Output: clicontract.Output{Mode: clicontract.OutputJSON},
 				Subcommands: []*clicontract.Command{
-					{Name: "path", Short: "print the path"},
+					{Name: "path", Short: "print the path", Handle: noopHandle},
 				},
 			},
 		},
@@ -137,7 +153,7 @@ func TestManifestRejectsMalformedOutput(t *testing.T) {
 	codesless := &clicontract.App{
 		Name: "testcli",
 		Commands: []*clicontract.Command{
-			{Name: "bad", Short: "bad output", Output: clicontract.Output{Mode: clicontract.OutputJSON}},
+			{Name: "bad", Short: "bad output", Handle: noopHandle, Output: clicontract.Output{Mode: clicontract.OutputJSON}},
 		},
 	}
 	_, err = Manifest(codesless, Options{Binary: "testcli"})

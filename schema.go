@@ -146,10 +146,10 @@ func (c *Command) Schema() CommandSchema {
 	}
 	if len(c.Subcommands) > 0 {
 		// A parent parses only its persistent flags and runs no leaf
-		// contract of its own. validate and the document walks reject a
-		// parent that declares the leaf-only members; the zeroing here keeps
-		// a direct Schemas() call — which validates nothing — from rendering
-		// leaf-only state into the wire.
+		// contract of its own. Every entry point funnels through the tree's
+		// validate, which rejects a parent that declares the leaf-only
+		// members; the zeroing here keeps a direct Schemas() call — which
+		// validates nothing — from rendering leaf-only state into the wire.
 		entry.URL = false
 		entry.Positionals = nil
 		entry.NoInterspersed = false

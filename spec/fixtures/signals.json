@@ -1,0 +1,33 @@
+{
+  "fixtureVersion": 1,
+  "id": "signals",
+  "description": "SIGINT exits 130 and SIGTERM 143 when the app does not own signals.",
+  "document": {
+    "schema": "cli-contract/cli-schema/v1",
+    "name": "fixture",
+    "commands": {
+      "serve": {
+        "short": "run the service",
+        "use": "serve",
+        "url_positional": false,
+        "output": { "mode": "json", "success_exit_codes": [0] }
+      }
+    },
+    "common_flags": {},
+    "signals": { "SIGINT": 130, "SIGTERM": 143 }
+  },
+  "cases": [
+    {
+      "id": "sigint",
+      "argv": ["serve"],
+      "signal": "SIGINT",
+      "expect": { "exit": 130 }
+    },
+    {
+      "id": "sigterm",
+      "argv": ["serve"],
+      "signal": "SIGTERM",
+      "expect": { "exit": 143 }
+    }
+  ]
+}

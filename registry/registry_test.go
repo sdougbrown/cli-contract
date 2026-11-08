@@ -13,16 +13,16 @@ func testApp() *clicontract.App {
 		Version: "vtest",
 		Commands: []*clicontract.Command{
 			{
-				Name:        "reconcile",
-				Short:       "collect feedback and establish the baseline",
+				Name:  "reconcile",
+				Short: "collect feedback and establish the baseline", Handle: noopHandle,
 				Positionals: []clicontract.Positional{{Name: "URL", Required: true}},
 				Flags: []clicontract.Flag{
 					{Name: "head", Kind: clicontract.String, Usage: "expected head SHA", Required: true},
 				},
 			},
 			{
-				Name:        "ack",
-				Short:       "acknowledge delivered event IDs",
+				Name:  "ack",
+				Short: "acknowledge delivered event IDs", Handle: noopHandle,
 				Positionals: []clicontract.Positional{{Name: "URL", Required: true}},
 				Flags: []clicontract.Flag{
 					{Name: "consumer", Kind: clicontract.String, Usage: "consumer name", Required: true},
@@ -33,8 +33,8 @@ func testApp() *clicontract.App {
 				Name:  "store",
 				Short: "store utilities",
 				Subcommands: []*clicontract.Command{
-					{Name: "path", Short: "print the store path"},
-					{Name: "reset", Short: "delete the store", Flags: []clicontract.Flag{
+					{Name: "path", Short: "print the store path", Handle: noopHandle},
+					{Name: "reset", Short: "delete the store", Handle: noopHandle, Flags: []clicontract.Flag{
 						{Name: "target", Kind: clicontract.String, Usage: "scope the reset"},
 					}},
 				},

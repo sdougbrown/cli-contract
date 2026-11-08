@@ -15,9 +15,19 @@ extension, or a deliberate gap; it never introduces new v1 behavior.
 | CC-03 | Help exits 0 with plain text; an unknown help topic is a caller error. | `App.BareHelp` chooses between help-and-0 and missing-subcommand-and-2 for a bare invocation. The document does not carry the choice. | Gap, out of v1: a bare invocation is not a conformance case. A runner may exercise it, but the checker cannot predict it from the document. |
 | CC-04 | Help output is plain text. | Cobra's help wording differs by version and by app; the library passes `Short`/`Long` through unchanged. | Conforming: fixtures assert the stdout class and exit code, never the text. |
 | CC-05 | `output.mode` states how stdout is decoded. | Nothing described a stream command's framing: `Command.Stream` writes incrementally and owns its own records. | Gap, out of v1: a stream command may declare `raw` or no output mode. Describing stream framing is future work. |
-| CC-06 | SIGINT exits 130 and SIGTERM 143 unless the app owns signals. | The library watches both signals and re-checks after output; a handler-owned app installs its own handlers. | Conforming: the library runner injects the signal in-process and asserts the code. A black-box checker skips signal cases unless the target declares a command that stays alive. Windows is out of scope for v1 signal and exit-code cases. |
+| CC-06 | SIGINT exits 130 and SIGTERM 143 unless the app owns signals. | The library watches both signals and re-checks after output; a handler-owned app installs its own handlers. | Conforming: the library runner injects the signal in-process and asserts the code. The black-box checker has no signal support in v1, because the surface does not declare a command that stays alive. Windows is out of scope for v1 signal and exit-code cases. |
 | CC-07 | A flag default is the value the parser applies: a number for `integer`, a Go duration string for `duration`. | Before this release the document rendered an integer default as `""` and a duration as its nanosecond count. | Fixed in v1: `defaultOf` renders each kind's applied value, and a round-trip test proves the document rebuilds the parser it describes. |
 | CC-08 | A command that owns subcommands declares no positionals and carries its persistent flags under `flags`. | The renderer nulls `flags`, `positionals`, and `url_positional` for a parent, then writes `PersistentFlags` under `flags`; the builder reads the same convention back. | Conforming: the rule is one rendering path in both directions. The JSON Schema cannot express it, so [`README.md`](README.md) states it as a semantic. |
+
+| CC-09 | An early draft of this contract said a dispatch failure writes nothing on stdout. | The library hands the error to the adapter, which writes its error result: `git-feedback nope` prints a JSON envelope on stdout, a diagnostic on stderr, and exits 2. | Conforming: v1 fixes exit 2 and a diagnostic; stdout is the app's error output, asserted as a class rather than as empty. |
+| CC-10 | A flag default's JSON type follows its kind: a string for `string` and `duration`, a boolean for `bool`, a whole number for `integer`, an array of strings for `repeat`. | The schema now constrains the type per kind with `if`/`then`, and whole-number for `integer` with `multipleOf`. What it cannot express: the int64 range bound on integer defaults and the Go duration grammar (`300ms`, `1h30m`) — RFC 3339 `format: duration` is a different vocabulary. | Partially expressible: the type split is enforced by the validator; the reference implementation enforces the range and grammar, and the conformance fixtures pin both. |
+
+## Fixture conventions
+
+Fixture ids are stable. A runtime implementation consumes the fixture index
+rather than copying cases into implementation-specific tests. A case asserts
+an argv, optional signal, exit code, and stream classes; it never asserts help
+wording or envelope prose.
 
 ## v1 disposition
 

@@ -229,10 +229,18 @@ func UsageErrorf(format string, args ...any) *UsageError {
 	return &UsageError{Message: fmt.Sprintf(format, args...)}
 }
 
-// validate checks one declared App: every command and subcommand has a
-// short, the flag lists the tree builder registers are well-formed and free
-// of repeats, and handlers are exclusive. Called by buildTree so drift
-// fails at startup on every entry point.
+// Validate checks the whole declaration the way Run and Tree do: names,
+// handler exclusivity, leaf-only shapes, availability rules, outputs, and
+// flags. The render paths (the schema document and the registry manifest)
+// call it so they reject exactly what the tree rejects.
+func Validate(app *App) error {
+	return validate(app)
+}
+
+// validate is Validate's implementation: every command and subcommand has a
+// name and a short, the flag lists the tree builder registers are
+// well-formed and free of repeats, and handlers are exclusive. Called by
+// buildTree so drift fails at startup on every entry point.
 func validate(app *App) error {
 	checks, err := validateAvailability(app)
 	if err != nil {
@@ -329,6 +337,9 @@ func validateCommand(path string, c *Command, inherited []surfaceFlag, common []
 		}
 	}
 	for _, sub := range c.Subcommands {
+		if sub.Name == "" {
+			return UsageErrorf("command %q has a subcommand with no name", path)
+		}
 		if err := validateCommand(path+" "+sub.Name, sub, surface, common, commonNames, checks); err != nil {
 			return err
 		}
@@ -354,9 +365,10 @@ func declaresHelp(inherited []surfaceFlag, flags []Flag) bool {
 }
 
 // ValidateLeafOnly rejects a parent that declares a member only a leaf may
-// carry: rules, positionals, or no_interspersed. Every direct-entry-point
-// walk and the tree's validate call it, so the leaf-only rule lives in one
-// place beside ValidateOutput.
+// carry: rules, positionals, or no_interspersed. Every entry point — the
+// tree, the document render, and the manifest — funnels through the tree's
+// validate, which owns the leaf-only rejection and calls this helper beside
+// ValidateOutput.
 func ValidateLeafOnly(path string, cmd *Command) error {
 	if len(cmd.Subcommands) == 0 {
 		return nil
@@ -377,9 +389,9 @@ func ValidateLeafOnly(path string, cmd *Command) error {
 // command, and a mode without a success-code list leaves it guessing which
 // exits decode.
 //
-// Run, Parse, and Tree reach it through validate; the registry manifest and
-// the schema document render without building a tree, so each checks it
-// directly.
+// Run, Parse, and Tree reach it through validate, and so do the render
+// paths: the registry manifest and the schema document call the tree's
+// validate before rendering, so they reject what the tree rejects.
 func (c *Command) ValidateOutput(path string) error {
 	o := c.Output
 	declared := o.Mode != "" || o.JSONPointer != "" || len(o.SuccessExitCodes) > 0

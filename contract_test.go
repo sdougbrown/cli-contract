@@ -792,6 +792,33 @@ func TestValidatePanicsOnDrift(t *testing.T) {
 	Run(app, &testAdapter{}, []string{"reconcile", "u"}, &bytes.Buffer{}, &bytes.Buffer{})
 }
 
+func TestValidateNamesTheParentOfANamelessSubcommand(t *testing.T) {
+	app := &App{
+		Name:    "ncli",
+		Version: "vtest",
+		Commands: []*Command{{
+			Name:  "wf",
+			Short: "workflow utilities",
+			Subcommands: []*Command{{
+				Short: "a subcommand with no name",
+				Handle: func(ctx context.Context, inv Invocation, _ io.Writer) (any, error) {
+					return nil, nil
+				},
+			}},
+		}},
+	}
+	defer func() {
+		r := recover()
+		if r == nil {
+			t.Fatal("validate did not panic for a subcommand without a name")
+		}
+		if !strings.Contains(r.(string), `command "wf" has a subcommand with no name`) {
+			t.Errorf("panic = %v", r)
+		}
+	}()
+	Run(app, &testAdapter{}, []string{"wf"}, &bytes.Buffer{}, &bytes.Buffer{})
+}
+
 // TestTreeValidatesTheDeclaration pins that Tree enforces the declaration
 // contract like Run and Parse: an invalid declaration panics with validate's
 // message instead of inside pflag at registration.
