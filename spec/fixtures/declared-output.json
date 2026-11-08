@@ -86,6 +86,15 @@
         "stdout": { "class": "empty" },
         "stderr": { "class": "prefix", "text": "store clear:" }
       }
+    },
+    {
+      "id": "nothing-on-nested-success",
+      "argv": ["store", "clear"],
+      "expect": {
+        "exit": 0,
+        "stdout": { "class": "empty" },
+        "stderr": { "class": "empty" }
+      }
     }
   ]
 }

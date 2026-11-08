@@ -204,7 +204,11 @@ func conformanceHandlers(doc *SchemaDocument) map[string]HandleFunc {
 			case OutputRaw:
 				return "fixture raw output\n", nil
 			case OutputNone:
-				return nil, nil
+				// A non-nil result is what makes the none cases pins: a
+				// runner that fails to resolve this command's declared mode
+				// writes the JSON envelope here and fails the empty-stdout
+				// expectation, instead of passing through the nil shortcut.
+				return "fixture none output", nil
 			}
 			return map[string]any{
 				"command":  inv.Command,
