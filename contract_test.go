@@ -477,6 +477,67 @@ func TestRunDispatchDiagnostics(t *testing.T) {
 	})
 }
 
+// TestErrorResultCommandIsTheDeclaredPath pins the ErrorResult contract: a
+// failure reports the full declared command path it resolved to, the key a
+// nested command's output declaration is stored under. A failure that matched
+// no declared command reports the top-level argv token the caller typed.
+func TestErrorResultCommandIsTheDeclaredPath(t *testing.T) {
+	envelopeCommand := func(t *testing.T, stdout string) any {
+		t.Helper()
+		var envelope map[string]any
+		if err := json.Unmarshal([]byte(stdout), &envelope); err != nil {
+			t.Fatalf("stdout is not one JSON value: %v (%q)", err, stdout)
+		}
+		return envelope["command"]
+	}
+
+	tests := []struct {
+		name string
+		argv []string
+		want string
+	}{
+		{"top-level dispatch failure", []string{"reconcile", "--bogus", "u"}, "reconcile"},
+		{"nested dispatch failure", []string{"store", "reset", "--bogus"}, "store reset"},
+		{"bare parent failure", []string{"store"}, "store"},
+		{"unknown command keeps the typed token", []string{"bogus"}, "bogus"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			code, stdout, stderr := runApp(t, testApp(), &testAdapter{}, tc.argv...)
+			if code != 2 {
+				t.Fatalf("exit code = %d, want 2 (stderr: %s)", code, stderr)
+			}
+			if got := envelopeCommand(t, stdout); got != tc.want {
+				t.Errorf("command = %v, want %q", got, tc.want)
+			}
+		})
+	}
+
+	t.Run("nested handler failure", func(t *testing.T) {
+		app := &App{
+			Name: "ncli",
+			Commands: []*Command{{
+				Name:  "wf",
+				Short: "workflows",
+				Subcommands: []*Command{{
+					Name:  "run",
+					Short: "run one workflow",
+					Handle: func(context.Context, Invocation, io.Writer) (any, error) {
+						return nil, UsageErrorf("no such workflow")
+					},
+				}},
+			}},
+		}
+		code, stdout, stderr := runApp(t, app, &testAdapter{}, "wf", "run")
+		if code != 2 {
+			t.Fatalf("exit code = %d, want 2 (stderr: %s)", code, stderr)
+		}
+		if got := envelopeCommand(t, stdout); got != "wf run" {
+			t.Errorf("command = %v, want the declared path wf run", got)
+		}
+	})
+}
+
 func TestRunEnvelopePaths(t *testing.T) {
 	t.Run("success writes the handler result", func(t *testing.T) {
 		adapter := &testAdapter{}

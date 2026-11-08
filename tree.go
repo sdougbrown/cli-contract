@@ -65,7 +65,12 @@ func SignalExitCodes() map[string]int {
 // codes.
 type Adapter interface {
 	// ErrorResult builds the result written for a dispatch-level (caller)
-	// error or a handler failure.
+	// error or a handler failure. command is the full declared command path
+	// of the command the failure resolved to, nested names joined with
+	// spaces ("store reset"), so an adapter resolves a nested command's
+	// declaration from the same key the document uses. A failure that
+	// matched no declared command — an unknown top-level command has no
+	// declared path — reports the top-level argv token instead.
 	ErrorResult(command string, err error) any
 	// Write emits one result to stdout. It must write exactly one JSON
 	// value for envelope-style apps.
@@ -387,7 +392,7 @@ func (exec *execution) invocation(ctx context.Context, c *Command, inv Invocatio
 		result, err = c.Handle(ctx, inv, stderr)
 	}
 	if err != nil {
-		exec.result = exec.adapter.ErrorResult(inv.Command, err)
+		exec.result = exec.adapter.ErrorResult(invocationCommandPath(inv), err)
 		exec.handlerErr = err
 		return
 	}
@@ -593,6 +598,36 @@ func commandNames(cmds []*Command) []string {
 		names[i] = c.Name
 	}
 	return names
+}
+
+// invocationCommandPath is the full declared command path of one invocation:
+// the top-level command name plus every nested name below it ("store
+// reset"), the key the document's per-command declarations use. A top-level
+// command's path is its own name.
+func invocationCommandPath(inv Invocation) string {
+	if len(inv.Path) == 0 {
+		return inv.Command
+	}
+	return inv.Command + " " + strings.Join(inv.Path, " ")
+}
+
+// errorCommand names the command an Adapter's ErrorResult reports: the full
+// declared path of the command the failure resolved to ("store reset"), the
+// key its output declaration is stored under. A dispatched failure has its
+// invocation on hand; a failure before dispatch has the command cobra
+// resolved. A failure that never resolved to a declared command — an unknown
+// top-level command names none — reports fallback, the top-level argv token
+// the caller typed.
+func (exec *execution) errorCommand(fallback string) string {
+	if exec.ran || exec.rawRan {
+		return invocationCommandPath(exec.inv)
+	}
+	if exec.failCmd != nil {
+		if names := commandPath(exec.failCmd); len(names) > 0 {
+			return strings.Join(names, " ")
+		}
+	}
+	return fallback
 }
 
 // Tree builds the cobra command tree without an adapter: for tests and

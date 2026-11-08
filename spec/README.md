@@ -54,7 +54,11 @@ The document keeps two kinds of statement apart, because their owners differ.
 **App-declared behavior.** Varies per CLI, so it is declared and then honored:
 
 - `output.mode` per command: `json` (one JSON value), `raw` (bytes the
-  consumer must not decode), or `none` (nothing).
+  consumer must not decode), or `none` (nothing). The mode governs **every**
+  outcome, not only success: a `json` command writes one JSON value on a
+  dispatch failure too (the error envelope), a `raw` command writes text or
+  bytes, and a `none` command writes nothing. Exit 2 and the stderr diagnostic
+  are unchanged.
 - `output.success_exit_codes`: the exit codes that mean success. Required when
   a mode is declared, so two identical-looking declarations cannot publish
   different sets.
@@ -81,3 +85,78 @@ from this document:
 Any JSON Schema draft-07 validator validates a document against
 `cli-contract.schema.json`. In this repository, `go test ./...` also checks
 that the document the library renders satisfies the published schema.
+
+## Conformance fixtures
+
+[`index.json`](index.json) lists the fixtures. Each fixture is one declaration
+plus the cases that declaration must pass, in the same shape as
+`umpire-spec/conformance`:
+
+```json
+{
+  "fixtureVersion": 1,
+  "id": "help-and-version",
+  "description": "Short human summary",
+  "document": { "schema": "cli-contract/cli-schema/v1", "commands": {}, "common_flags": {} },
+  "cases": [
+    {
+      "id": "version",
+      "argv": ["--version"],
+      "expect": {
+        "exit": 0,
+        "stdout": { "class": "plain-text", "equals": "fixture 1.0.0\n" },
+        "stderr": { "class": "empty" }
+      }
+    }
+  ]
+}
+```
+
+- `document` is a schema document. A runner validates it against
+  `cli-contract.schema.json` before it runs anything.
+- `signal` is optional: `SIGINT` or `SIGTERM`. The in-process runner injects
+  it through the library's test seam.
+- `stdout` and `stderr` may be omitted. A signal case that asserts only the
+  exit code omits both.
+
+### Stream classes
+
+| Class | Means |
+|---|---|
+| `empty` | Nothing after trimming whitespace. |
+| `plain-text` | Non-empty, and not one JSON value. `equals` pins the exact text. |
+| `json-value` | Exactly one JSON value. |
+| `json-matches` | The JSON value has a value at `pointer` (RFC 6901) equal to `equals`. |
+| `non-empty` | stderr: something was written. |
+| `prefix` | stderr: starts with `text`. |
+
+Cases assert a class, never help wording. That is what keeps a port from
+being pinned to cobra's text.
+
+### The fixture app
+
+A runner builds the app the document declares and supplies one handler per
+leaf command path. This repository's reference runner echoes the parsed
+invocation for a result command (`{"command", "path", "args", "flags",
+"bools", "ints", "supplied"}`), returns text for a `raw` command, and returns
+nothing for a `none` command. Its adapter writes stdout as the document's
+`output.mode` declares, on every outcome: a dispatch failure on a `none`
+command writes nothing, on a `raw` command writes text, and on a `json`
+command writes the error envelope. A port may choose its own handlers, but it
+must honor the same declaration, applying the mode declared for the command
+path the failure resolved to.
+
+### Writing a port runner
+
+1. Read `index.json`, resolving each `path` against the directory that
+   contains `index.json`.
+2. Parse the fixture and validate `document` against the schema.
+3. Build the app the document describes, mapping each leaf path to a handler.
+4. For each case, run `argv` and compare the exit code and the stream classes.
+5. Fail on wording. Pass on class.
+
+Signal cases need an in-process seam or a target that stays alive long enough
+to be signalled. The black-box checker has no signal support in v1: the
+surface does not declare a command that stays alive. Windows is out of scope
+for v1 signal and exit-code cases.
+

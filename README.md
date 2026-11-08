@@ -137,6 +137,14 @@ type Adapter interface {
 }
 ```
 
+`ErrorResult` builds the result written for a failure. Its `command` is the
+full declared command path the failure resolved to — `"store reset"` for a
+nested command, the top-level name for a top-level one — so an adapter
+resolves a nested command's declared `output.mode` from the same key the
+document stores it under. A failure that matched no declared command, such as
+an unknown top-level command, reports the top-level argv token the caller
+typed.
+
 ### Streaming output
 
 Use `Command.Stream` for output produced during an invocation. A stream

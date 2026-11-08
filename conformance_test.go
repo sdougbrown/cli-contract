@@ -73,9 +73,20 @@ type conformanceAdapter struct {
 	modes  map[string]OutputMode
 	inv    Invocation
 	signal os.Signal
+	// failedCommand is the command ErrorResult reported: the full declared
+	// path of the command a failure resolved to, or the top-level argv token
+	// when it matched no declared command. A failure before dispatch records
+	// no Invocation, so the declared output mode is read from this path then.
+	failedCommand string
 }
 
 func (a *conformanceAdapter) ErrorResult(command string, err error) any {
+	a.failedCommand = command
+	// A raw command's stdout is text or bytes on a failure too; an error
+	// envelope is not its vocabulary.
+	if a.modes[command] == OutputRaw {
+		return err.Error()
+	}
 	code := "internal"
 	var usage *UsageError
 	if errors.As(err, &usage) {
@@ -104,11 +115,14 @@ func (a *conformanceAdapter) Write(w io.Writer, result any) error {
 	return err
 }
 
-// mode reports the current command's declared output mode. A dispatch failure
-// never reaches Deadline, so no invocation is recorded and the error envelope
-// is written as JSON, the fixture app's own convention.
+// mode reports the current command's declared output mode. A failure before
+// dispatch never reaches Deadline, so no Invocation is recorded and the path
+// ErrorResult reported names the mode instead.
 func (a *conformanceAdapter) mode() OutputMode {
-	return a.modes[invocationPath(a.inv)]
+	if path := invocationCommandPath(a.inv); path != "" {
+		return a.modes[path]
+	}
+	return a.modes[a.failedCommand]
 }
 
 func (a *conformanceAdapter) ExitCode(inv Invocation, result any, handlerErr error) int {
@@ -164,18 +178,6 @@ func TestConformanceAdapterEnvelope(t *testing.T) {
 	}
 }
 
-// invocationPath is the full command path of one invocation, the key both the
-// document and the handler map use.
-func invocationPath(inv Invocation) string {
-	if inv.Command == "" {
-		return ""
-	}
-	if len(inv.Path) == 0 {
-		return inv.Command
-	}
-	return inv.Command + " " + strings.Join(inv.Path, " ")
-}
-
 // conformanceModes indexes every leaf's declared output mode by command path.
 func conformanceModes(doc *SchemaDocument) map[string]OutputMode {
 	modes := map[string]OutputMode{}
@@ -202,7 +204,11 @@ func conformanceHandlers(doc *SchemaDocument) map[string]HandleFunc {
 			case OutputRaw:
 				return "fixture raw output\n", nil
 			case OutputNone:
-				return nil, nil
+				// A non-nil result is what makes the none cases pins: a
+				// runner that fails to resolve this command's declared mode
+				// writes the JSON envelope here and fails the empty-stdout
+				// expectation, instead of passing through the nil shortcut.
+				return "fixture none output", nil
 			}
 			return map[string]any{
 				"command":  inv.Command,

@@ -29,7 +29,7 @@
     {
       "id": "declared-output",
       "path": "fixtures/declared-output.json",
-      "description": "A command writes stdout as its output.mode declares: one JSON value, plain text, or nothing."
+      "description": "A command writes stdout as its output.mode declares on every outcome: one JSON value, plain text, or nothing, on success and on a dispatch failure."
     }
   ]
 }
