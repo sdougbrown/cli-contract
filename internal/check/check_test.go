@@ -191,8 +191,42 @@ func TestRunStopsOnCancellation(t *testing.T) {
 	if !errors.Is(err, context.Canceled) {
 		t.Errorf("error = %q, want a cancellation", err)
 	}
+	var target *TargetError
+	if !errors.As(err, &target) {
+		t.Errorf("error = %q, want a TargetError: the aborted run belongs to the target side", err)
+	}
 	if elapsed >= 5*time.Second {
 		t.Errorf("run took %s after cancellation; want well under the per-case timeout", elapsed)
+	}
+}
+
+// TestRunFailureClasses pins which run failures belong to the target: an
+// executable that cannot start is target-side, while an empty target list is
+// the caller's own input.
+func TestRunFailureClasses(t *testing.T) {
+	cases := []struct {
+		name       string
+		target     []string
+		cases      []Case
+		wantTarget bool
+	}{
+		{
+			name:       "unlaunchable target",
+			target:     []string{filepath.Join(t.TempDir(), "missing-target")},
+			cases:      []Case{{ID: "help:root", Argv: []string{"--help"}, Want: Want{Exit: 0}}},
+			wantTarget: true,
+		},
+		{name: "no target", target: nil, cases: nil, wantTarget: false},
+	}
+	for _, c := range cases {
+		_, err := run(context.Background(), c.target, c.cases, time.Second)
+		if err == nil {
+			t.Fatalf("%s: run produced no error", c.name)
+		}
+		var target *TargetError
+		if got := errors.As(err, &target); got != c.wantTarget {
+			t.Errorf("%s: error = %v, TargetError = %t, want %t", c.name, err, got, c.wantTarget)
+		}
 	}
 }
 
@@ -210,6 +244,10 @@ func TestLoadDocumentTimesOut(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "timed out") {
 		t.Errorf("error = %q, want a timeout explanation", err)
+	}
+	var target *TargetError
+	if !errors.As(err, &target) {
+		t.Errorf("error = %q, want a TargetError: the target hung", err)
 	}
 }
 
@@ -235,6 +273,36 @@ func TestLoadDocumentReportsStderr(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "exited 3") {
 		t.Errorf("error = %q, want the observed exit code", err)
+	}
+	var target *TargetError
+	if !errors.As(err, &target) {
+		t.Errorf("error = %q, want a TargetError: the target's command failed", err)
+	}
+}
+
+// TestLoadDocumentSplitsCallerFromTarget pins the classification at the load
+// site: a missing schema file is the caller's input, while a target that
+// prints an unreadable document is the target's failure.
+func TestLoadDocumentSplitsCallerFromTarget(t *testing.T) {
+	_, err := loadDocument(context.Background(), []string{"unused"}, filepath.Join(t.TempDir(), "missing.json"), "", time.Second)
+	if err == nil {
+		t.Fatal("a missing schema file produced no error")
+	}
+	var target *TargetError
+	if errors.As(err, &target) {
+		t.Errorf("error = %q, want a caller-side error, not a TargetError", err)
+	}
+
+	sh, err := exec.LookPath("sh")
+	if err != nil {
+		t.Skip("no sh(1) on this platform")
+	}
+	_, err = loadDocument(context.Background(), []string{sh, "-c", "printf 'not json\\n'"}, "", "", time.Second)
+	if err == nil {
+		t.Fatal("a target that printed prose produced no error")
+	}
+	if !errors.As(err, &target) {
+		t.Errorf("error = %q, want a TargetError: the target printed an unreadable document", err)
 	}
 }
 

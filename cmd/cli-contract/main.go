@@ -6,7 +6,9 @@
 // The checker reads the target's schema document, derives the cases the
 // declared surface implies, and runs them against the binary as a black box.
 // Exit 0 means every case passed, 1 means at least one failed, and 2 means the
-// check could not run.
+// check could not run. A check that could not run still separates the two
+// causes in its error envelope: a malformed invocation reports usage, while a
+// target that failed or hung is an operational failure.
 package main
 
 import (
@@ -29,13 +31,20 @@ func main() {
 
 // adapter writes the report as one JSON value and maps a failed check to the
 // operational exit code, so a conformance failure is distinguishable from a
-// caller mistake.
+// check that never ran.
 type adapter struct{}
 
 func (adapter) ErrorResult(command string, err error) any {
+	// A caller mistake is the only usage class. A target that failed or hung
+	// is not the caller's fault and keeps the internal default.
 	code := "internal"
+	var target *check.TargetError
 	var usage *clicontract.UsageError
-	if errors.As(err, &usage) {
+	switch {
+	case errors.As(err, &target):
+		// A broken or hanging target is an operational failure; the internal
+		// default is the honest class.
+	case errors.As(err, &usage):
 		code = "usage"
 	}
 	return map[string]any{
@@ -53,11 +62,10 @@ func (adapter) Write(w io.Writer, result any) error {
 
 func (adapter) ExitCode(inv clicontract.Invocation, result any, handlerErr error) int {
 	if handlerErr != nil {
-		var usage *clicontract.UsageError
-		if errors.As(handlerErr, &usage) {
-			return 2
-		}
-		return clicontract.ExitOperational
+		// A handler failure means the check never produced a verdict: a caller
+		// mistake and a broken target alike exit 2. Only a completed run can
+		// fail a case (1).
+		return 2
 	}
 	report, ok := result.(check.Report)
 	if ok && !report.OK {
@@ -73,6 +81,18 @@ func (adapter) Deadline(ctx context.Context, inv clicontract.Invocation) (contex
 func (adapter) BeforeHandler(inv clicontract.Invocation, stderr io.Writer) {}
 
 func (adapter) Validate(inv clicontract.Invocation) error { return nil }
+
+// classifyCheckError decides whose failure stopped the check. A target-side
+// failure keeps its own type so the adapter can report a broken target;
+// anything else is the caller's own input — an unreadable --schema-file or a
+// document the caller supplied that does not parse — and is a usage error.
+func classifyCheckError(err error) error {
+	var target *check.TargetError
+	if errors.As(err, &target) {
+		return err
+	}
+	return &clicontract.UsageError{Message: err.Error()}
+}
 
 func app() *clicontract.App {
 	var self *clicontract.App
@@ -94,11 +114,11 @@ func app() *clicontract.App {
 					target := inv.Args
 					doc, err := check.LoadDocument(ctx, target, inv.Flags["schema-file"], inv.Flags["schema-command"])
 					if err != nil {
-						return nil, &clicontract.UsageError{Message: err.Error()}
+						return nil, classifyCheckError(err)
 					}
 					results, err := check.Run(ctx, target, check.Derive(doc))
 					if err != nil {
-						return nil, &clicontract.UsageError{Message: err.Error()}
+						return nil, classifyCheckError(err)
 					}
 					return check.Report{
 						Target: target,

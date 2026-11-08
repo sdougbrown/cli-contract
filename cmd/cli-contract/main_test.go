@@ -25,8 +25,8 @@ func buildChecker(t *testing.T) string {
 	return bin
 }
 
-// runChecker runs the checker, returning its exit code and the decoded report.
-func runChecker(t *testing.T, bin string, argv ...string) (int, check.Report) {
+// runCheckerRaw runs the checker, returning its exit code and raw stdout.
+func runCheckerRaw(t *testing.T, bin string, argv ...string) (int, []byte) {
 	t.Helper()
 	cmd := exec.Command(bin, argv...)
 	out, err := cmd.Output()
@@ -38,11 +38,37 @@ func runChecker(t *testing.T, bin string, argv ...string) (int, check.Report) {
 		}
 		code = exit.ExitCode()
 	}
+	return code, out
+}
+
+// runChecker runs the checker, returning its exit code and the decoded report.
+func runChecker(t *testing.T, bin string, argv ...string) (int, check.Report) {
+	t.Helper()
+	code, out := runCheckerRaw(t, bin, argv...)
 	var report check.Report
 	if err := json.Unmarshal(out, &report); err != nil {
 		t.Fatalf("decode report (%q): %v", out, err)
 	}
 	return code, report
+}
+
+// errorEnvelope is the failure shape the adapter writes instead of a report.
+type errorEnvelope struct {
+	Status string `json:"status"`
+	Error  struct {
+		Code    string `json:"code"`
+		Message string `json:"message"`
+	} `json:"error"`
+}
+
+// decodeErrorEnvelope decodes a failure envelope.
+func decodeErrorEnvelope(t *testing.T, out []byte) errorEnvelope {
+	t.Helper()
+	var env errorEnvelope
+	if err := json.Unmarshal(out, &env); err != nil {
+		t.Fatalf("decode error envelope (%q): %v", out, err)
+	}
+	return env
 }
 
 // buildFixture builds the stub target the schema-command tests run against.
@@ -77,7 +103,8 @@ func writeTargetDocument(t *testing.T) string {
 }
 
 // TestAdapterErrorCodes pins the envelope split the reference adapters use:
-// a caller mistake is a usage error, anything else is internal.
+// a caller mistake is a usage error, while a broken target and any other
+// failure are not.
 func TestAdapterErrorCodes(t *testing.T) {
 	cases := []struct {
 		name string
@@ -85,6 +112,7 @@ func TestAdapterErrorCodes(t *testing.T) {
 		want string
 	}{
 		{name: "usage", err: &clicontract.UsageError{Message: "bad schema file"}, want: "usage"},
+		{name: "target failure", err: &check.TargetError{Err: errors.New("schema command exited 2")}, want: "internal"},
 		{name: "internal", err: errors.New("boom"), want: "internal"},
 	}
 	for _, c := range cases {
@@ -98,6 +126,29 @@ func TestAdapterErrorCodes(t *testing.T) {
 		}
 		if code, _ := errObj["code"].(string); code != c.want {
 			t.Errorf("%s: code = %q, want %q", c.name, code, c.want)
+		}
+	}
+}
+
+// TestAdapterExitCodes pins the exit split: a completed run's verdict decides
+// 0 or 1, while a check that never produced a verdict — the caller's mistake
+// or a broken target — is 2.
+func TestAdapterExitCodes(t *testing.T) {
+	cases := []struct {
+		name   string
+		result any
+		err    error
+		want   int
+	}{
+		{name: "every case passed", result: check.Report{OK: true}, want: 0},
+		{name: "a case failed", result: check.Report{OK: false}, want: 1},
+		{name: "caller mistake", err: &clicontract.UsageError{Message: "bad schema file"}, want: 2},
+		{name: "broken target", err: &check.TargetError{Err: errors.New("schema command exited 2")}, want: 2},
+		{name: "unclassified handler failure", err: errors.New("boom"), want: 2},
+	}
+	for _, c := range cases {
+		if got := (adapter{}).ExitCode(clicontract.Invocation{}, c.result, c.err); got != c.want {
+			t.Errorf("%s: exit = %d, want %d", c.name, got, c.want)
 		}
 	}
 }
@@ -253,5 +304,50 @@ func TestCheckMissingTargetExitsTwo(t *testing.T) {
 	code, _ := runChecker(t, bin, "check", "--schema-file", writeTargetDocument(t), target)
 	if code != 2 {
 		t.Fatalf("exit = %d, want 2: the check could not run", code)
+	}
+}
+
+// TestCheckSchemaFailureReportsNonUsage pins the wire class for a target-side
+// failure: a schema command that exits non-zero is a broken target, not a
+// caller mistake, so the envelope must not claim usage even though the check
+// still exits 2.
+func TestCheckSchemaFailureReportsNonUsage(t *testing.T) {
+	if testing.Short() {
+		t.Skip("builds a binary")
+	}
+	bin := buildChecker(t)
+
+	code, out := runCheckerRaw(t, bin, "check", "--schema-command", "no-such-schema-command", bin)
+	if code != 2 {
+		t.Fatalf("exit = %d, want 2: the check could not run", code)
+	}
+	env := decodeErrorEnvelope(t, out)
+	if env.Status != "error" {
+		t.Errorf("status = %q, want %q", env.Status, "error")
+	}
+	if env.Error.Code == "usage" {
+		t.Errorf("error code = %q: a failing schema command is not a caller mistake", env.Error.Code)
+	}
+	if env.Error.Code != "internal" {
+		t.Errorf("error code = %q, want %q", env.Error.Code, "internal")
+	}
+}
+
+// TestCheckBadSchemaFileReportsUsage pins the caller side of the same split:
+// an unreadable --schema-file is the invocation's own fault.
+func TestCheckBadSchemaFileReportsUsage(t *testing.T) {
+	if testing.Short() {
+		t.Skip("builds a binary")
+	}
+	bin := buildChecker(t)
+	missing := filepath.Join(t.TempDir(), "missing.json")
+
+	code, out := runCheckerRaw(t, bin, "check", "--schema-file", missing, "true")
+	if code != 2 {
+		t.Fatalf("exit = %d, want 2: the check could not run", code)
+	}
+	env := decodeErrorEnvelope(t, out)
+	if env.Error.Code != "usage" {
+		t.Errorf("error code = %q, want %q: an unreadable schema file is a caller mistake", env.Error.Code, "usage")
 	}
 }

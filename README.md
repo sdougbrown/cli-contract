@@ -246,9 +246,12 @@ against the binary as a black box. A CLI that does not use this library
 conforms if it passes.
 
 The report is one JSON value with one entry per case. Exit 0 means every case
-passed, 1 means at least one failed, and 2 means the check could not run. Signal
-cases are not derived: they need a command that stays alive, which the surface
-does not declare. The scheduled
+passed, 1 means at least one failed, and 2 means the check could not run. A
+check that could not run says whose failure stopped it: an unreadable
+`--schema-file` reports `error.code: "usage"`, while a target whose schema
+command fails, hangs, or prints an unreadable document reports a non-usage
+class. Signal cases are not derived: they need a command that stays alive,
+which the surface does not declare. The scheduled
 [consumer workflow](.github/workflows/conformance.yml) runs the checker against
 pinned releases of the CLIs that use the library.
 

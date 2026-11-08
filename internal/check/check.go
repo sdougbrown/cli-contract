@@ -39,6 +39,23 @@ const timedOutExit = -1
 // ClassAny requires nothing of a stream.
 const ClassAny = ""
 
+// TargetError marks a failure the target caused: its schema command exited
+// non-zero, timed out, or printed an unreadable document, or a case could not
+// be launched or was aborted. The check could not run, but the invocation was
+// well formed; a caller's own bad input does not carry this type.
+type TargetError struct{ Err error }
+
+func (e *TargetError) Error() string { return e.Err.Error() }
+
+// Unwrap keeps the cause reachable: context.Canceled from an aborted run, or
+// the exec error behind a launch failure.
+func (e *TargetError) Unwrap() error { return e.Err }
+
+// targetErrorf builds a target-side failure.
+func targetErrorf(format string, args ...any) error {
+	return &TargetError{Err: fmt.Errorf(format, args...)}
+}
+
 // Want is the behavior one case requires.
 type Want struct {
 	Exit   int    `json:"exit"`
@@ -175,7 +192,7 @@ func run(ctx context.Context, target []string, cases []Case, timeout time.Durati
 		timedOut := parentErr == nil && caseCtx.Err() == context.DeadlineExceeded
 		cancel()
 		if parentErr != nil {
-			return nil, fmt.Errorf("check: run %s: %w", strings.Join(argv, " "), parentErr)
+			return nil, targetErrorf("check: run %s: %w", strings.Join(argv, " "), parentErr)
 		}
 		got := Got{Stdout: stdout.String(), Stderr: stderr.String()}
 		if timedOut {
@@ -186,7 +203,7 @@ func run(ctx context.Context, target []string, cases []Case, timeout time.Durati
 		if err != nil {
 			var exit *exec.ExitError
 			if !errors.As(err, &exit) {
-				return nil, fmt.Errorf("check: run %s: %w", strings.Join(argv, " "), err)
+				return nil, targetErrorf("check: run %s: %w", strings.Join(argv, " "), err)
 			}
 			got.Exit = exit.ExitCode()
 		}
@@ -236,6 +253,8 @@ func LoadDocument(ctx context.Context, target []string, schemaFile, schemaComman
 // loadDocument is LoadDocument under a caller-chosen schema-command timeout.
 func loadDocument(ctx context.Context, target []string, schemaFile, schemaCommand string, timeout time.Duration) (*clicontract.SchemaDocument, error) {
 	if schemaFile != "" {
+		// A schema file is the caller's own input: an unreadable path or an
+		// unparseable document here is a caller mistake, not a target failure.
 		data, err := os.ReadFile(schemaFile)
 		if err != nil {
 			return nil, err
@@ -254,19 +273,24 @@ func loadDocument(ctx context.Context, target []string, schemaFile, schemaComman
 	cmd.WaitDelay = pipeGrace
 	out, err := cmd.Output()
 	if ctxErr := ctx.Err(); ctxErr != nil {
-		return nil, fmt.Errorf("check: %s: %w", strings.Join(argv, " "), ctxErr)
+		return nil, targetErrorf("check: %s: %w", strings.Join(argv, " "), ctxErr)
 	}
 	if cmdCtx.Err() == context.DeadlineExceeded {
-		return nil, fmt.Errorf("check: %s timed out after %s", strings.Join(argv, " "), timeout)
+		return nil, targetErrorf("check: %s timed out after %s", strings.Join(argv, " "), timeout)
 	}
 	if err != nil {
 		var exit *exec.ExitError
 		if errors.As(err, &exit) {
-			return nil, fmt.Errorf("check: %s exited %d: %s", strings.Join(argv, " "), exit.ExitCode(), strings.TrimSpace(stderr.String()))
+			return nil, targetErrorf("check: %s exited %d: %s", strings.Join(argv, " "), exit.ExitCode(), strings.TrimSpace(stderr.String()))
 		}
-		return nil, fmt.Errorf("check: run %s: %w", strings.Join(argv, " "), err)
+		return nil, targetErrorf("check: run %s: %w", strings.Join(argv, " "), err)
 	}
-	return clicontract.ParseSchemaDocument(out)
+	doc, err := clicontract.ParseSchemaDocument(out)
+	if err != nil {
+		// The target printed something that is not a schema document.
+		return nil, &TargetError{Err: err}
+	}
+	return doc, nil
 }
 
 // AllOK reports whether every case passed.
