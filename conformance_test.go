@@ -23,6 +23,9 @@ import (
 	"strings"
 	"syscall"
 	"testing"
+
+	"github.com/sdougbrown/cli-contract/internal/envelope"
+	"github.com/sdougbrown/cli-contract/internal/streamclass"
 )
 
 type conformanceIndex struct {
@@ -78,11 +81,7 @@ func (a *conformanceAdapter) ErrorResult(command string, err error) any {
 	if errors.As(err, &usage) {
 		code = "usage"
 	}
-	return map[string]any{
-		"command": command,
-		"status":  "error",
-		"error":   map[string]any{"code": code, "message": err.Error()},
-	}
+	return envelope.Error(command, code, err)
 }
 
 func (a *conformanceAdapter) Write(w io.Writer, result any) error {
@@ -140,6 +139,30 @@ func (a *conformanceAdapter) PendingSignal() (os.Signal, bool) {
 
 var _ Adapter = (*conformanceAdapter)(nil)
 var _ TestSeams = (*conformanceAdapter)(nil)
+
+// TestConformanceAdapterEnvelope pins the fixture runner's failure envelope to
+// the shared builder; the checker's own test pins its adapter the same way, so
+// an envelope change cannot reach one producer and miss the other.
+func TestConformanceAdapterEnvelope(t *testing.T) {
+	cases := []struct {
+		name string
+		err  error
+		want string
+	}{
+		{name: "usage", err: &UsageError{Message: "bad schema file"}, want: "usage"},
+		{name: "internal", err: errors.New("boom"), want: "internal"},
+	}
+	for _, c := range cases {
+		result := (&conformanceAdapter{}).ErrorResult("probe", c.err)
+		got, ok := result.(map[string]any)
+		if !ok {
+			t.Fatalf("%s: ErrorResult returned %T, want map[string]any", c.name, result)
+		}
+		if want := envelope.Error("probe", c.want, c.err); !reflect.DeepEqual(got, want) {
+			t.Errorf("%s: envelope = %#v, want %#v", c.name, got, want)
+		}
+	}
+}
 
 // invocationPath is the full command path of one invocation, the key both the
 // document and the handler map use.
@@ -311,34 +334,21 @@ func assertClass(t *testing.T, stream, got string, want *classExpect) {
 		t.Fatalf("%s: %s\nwant %+v", stream, fmt.Sprintf(format, args...), *want)
 	}
 	switch want.Class {
-	case "empty":
-		if strings.TrimSpace(got) != "" {
-			fail("not empty")
+	case streamclass.Empty, streamclass.NonEmpty, streamclass.PlainText, streamclass.JSONValue:
+		if reason := streamclass.Judge(want.Class, got); !reason.OK() {
+			fail("%s", reason)
 		}
-	case "non-empty":
-		if strings.TrimSpace(got) == "" {
-			fail("empty")
+		if want.Class == streamclass.PlainText {
+			if text, ok := want.Equals.(string); ok && got != text {
+				fail("text = %q, want %q", got, text)
+			}
 		}
 	case "prefix":
 		if !strings.HasPrefix(got, want.Text) {
 			fail("missing prefix %q", want.Text)
 		}
-	case "plain-text":
-		if strings.TrimSpace(got) == "" {
-			fail("empty")
-		}
-		if _, ok := decodeOneJSONValue(got); ok {
-			fail("decoded as JSON, want plain text")
-		}
-		if text, ok := want.Equals.(string); ok && got != text {
-			fail("text = %q, want %q", got, text)
-		}
-	case "json-value":
-		if _, ok := decodeOneJSONValue(got); !ok {
-			fail("not one JSON value")
-		}
 	case "json-matches":
-		value, ok := decodeOneJSONValue(got)
+		value, ok := streamclass.DecodeOneJSONValue(got)
 		if !ok {
 			fail("not one JSON value")
 		}
@@ -352,18 +362,6 @@ func assertClass(t *testing.T, stream, got string, want *classExpect) {
 	default:
 		fail("unknown class %q", want.Class)
 	}
-}
-
-// decodeOneJSONValue decodes exactly one JSON value from one stream.
-func decodeOneJSONValue(s string) (any, bool) {
-	if strings.TrimSpace(s) == "" {
-		return nil, false
-	}
-	var value any
-	if err := json.Unmarshal([]byte(s), &value); err != nil {
-		return nil, false
-	}
-	return value, true
 }
 
 // resolveJSONPointer resolves an RFC 6901 pointer against a decoded JSON value.
