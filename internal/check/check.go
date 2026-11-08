@@ -135,7 +135,7 @@ func Derive(doc *clicontract.SchemaDocument) []Case {
 				ID:      "missing-positional:" + path,
 				Command: path,
 				Argv:    names,
-				Want:    Want{Exit: 2, Stderr: streamclass.NonEmpty},
+				Want:    Want{Exit: 2, Stdout: errorOutputClass(cmd.Output), Stderr: streamclass.NonEmpty},
 			})
 		}
 	})

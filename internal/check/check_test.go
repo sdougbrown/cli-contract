@@ -382,13 +382,20 @@ func TestDeriveAssertsDeclaredErrorOutput(t *testing.T) {
 			"result": {Short: "result", Use: "result", Output: &clicontract.Output{Mode: clicontract.OutputJSON}},
 			"text":   {Short: "text", Use: "text", Output: &clicontract.Output{Mode: clicontract.OutputRaw}},
 			"plain":  {Short: "plain", Use: "plain"},
+			"submit": {
+				Short:       "submit a result",
+				Use:         "submit",
+				Output:      &clicontract.Output{Mode: clicontract.OutputNone},
+				Positionals: []clicontract.Positional{{Name: "ID", Required: true}},
+			},
 		},
 	}
 	want := map[string]string{
-		"unknown-flag:quiet":  streamclass.Empty,
-		"unknown-flag:result": streamclass.JSONValue,
-		"unknown-flag:text":   ClassAny,
-		"unknown-flag:plain":  ClassAny,
+		"unknown-flag:quiet":        streamclass.Empty,
+		"unknown-flag:result":       streamclass.JSONValue,
+		"unknown-flag:text":         ClassAny,
+		"unknown-flag:plain":        ClassAny,
+		"missing-positional:submit": streamclass.Empty,
 	}
 	seen := map[string]bool{}
 	for _, c := range Derive(doc) {
