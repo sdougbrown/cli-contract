@@ -396,6 +396,10 @@ func TestSchemaRendersInvocationRequirement(t *testing.T) {
 	if when, ok := first["when"].(map[string]any); !ok || when["op"] != OpOr {
 		t.Errorf("when = %#v, want the Or expression", first["when"])
 	}
+	second := rules[1].(map[string]any)
+	if second["field"] != "roster-file" {
+		t.Errorf("field-named rule lost its field: %#v", second)
+	}
 }
 
 // enforcingInputRulesApp declares the relationship set the issue's avenor
@@ -556,6 +560,12 @@ func TestEnforceInvocationRequirement(t *testing.T) {
 			reason: "a roster file needs an entry",
 		},
 		{
+			name:   "invocation failure outranks a field rule",
+			argv:   []string{"verify", "--roster-file="},
+			code:   2,
+			reason: invocationRequirementReason,
+		},
+		{
 			name:   "entry alone does not satisfy the requirement",
 			argv:   []string{"verify", "--roster-entry=main"},
 			code:   2,
@@ -596,6 +606,52 @@ func TestEnforceInvocationRequirement(t *testing.T) {
 	}
 	if _, err := Parse(invocationRequirementApp(), []string{"verify", "--loop-file="}); err == nil {
 		t.Error("Parse accepted an explicitly empty source")
+	}
+}
+
+// TestEnforceFieldlessEnabled pins the second fieldless gate form and the
+// default reason when the declaration gives none.
+func TestEnforceFieldlessEnabled(t *testing.T) {
+	app := inputRulesApp()
+	app.Commands[0].InputRules = []*Rule{
+		Enabled(Present("roster-entry"), "a roster entry is required"),
+	}
+	code, stdout, _ := runApp(t, app, &testAdapter{}, "run")
+	if code != 2 || !strings.Contains(stdout, "a roster entry is required") {
+		t.Fatalf("exit %d, stdout %q; want the enabledWhen rejection", code, stdout)
+	}
+	code, _, _ = runApp(t, app, &testAdapter{}, "run", "--roster-entry", "main")
+	if code != 0 {
+		t.Fatalf("exit %d; a satisfied enabledWhen rule rejected the invocation", code)
+	}
+
+	// An empty reason falls back to the enabledWhen default at the invocation
+	// level too.
+	defaultReason := inputRulesApp()
+	defaultReason.Commands[0].InputRules = []*Rule{
+		Enabled(Present("roster-entry"), ""),
+	}
+	code, stdout, _ = runApp(t, defaultReason, &testAdapter{}, "run")
+	if code != 2 || !strings.Contains(stdout, "condition not met") {
+		t.Fatalf("exit %d, stdout %q; want the default reason", code, stdout)
+	}
+}
+
+// TestRequiredFlagOutranksInvocationRequirement pins the check order: a missing
+// required flag is reported before an invocation-wide rule.
+func TestRequiredFlagOutranksInvocationRequirement(t *testing.T) {
+	app := invocationRequirementApp()
+	for i := range app.Commands[0].Flags {
+		if app.Commands[0].Flags[i].Name == "roster-entry" {
+			app.Commands[0].Flags[i].Required = true
+		}
+	}
+	code, stdout, _ := runApp(t, app, &testAdapter{}, "verify")
+	if code != 2 {
+		t.Fatalf("exit code = %d, want 2", code)
+	}
+	if !strings.Contains(stdout, "missing required flag --roster-entry") {
+		t.Errorf("stdout = %q, want the missing required flag named", stdout)
 	}
 }
 
