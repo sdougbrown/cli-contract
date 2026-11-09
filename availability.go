@@ -12,8 +12,8 @@ import (
 //     evaluated against inputs the consumer supplies at load time (profile
 //     mode, permission level, feature flags).
 //   - Command.InputRules gates whether one invocation is legal, over the
-//     command's own flags or, for a rule with no field, the invocation as a
-//     whole.
+//     command's own flags or, for a fieldless requires/enabledWhen rule, the
+//     invocation as a whole.
 //
 // The sets differ in subject namespace and dialect, not in rule type: a rule's
 // fields name tool names in the first set and flag names in the second. See the
@@ -101,16 +101,19 @@ type Expr struct {
 // namespace of the set it is declared in: tool names under
 // Command.Availability, flag names under Command.InputRules. In the
 // availability set a rule without an explicit Field applies to its own
-// command's tool; in the input set it applies to the invocation as a whole,
-// so its condition must hold even when the caller supplies no flags.
+// command's tool. In the input set a fieldless requires or enabledWhen rule
+// applies to the invocation as a whole. Its condition must hold even when the
+// caller supplies no flags.
 type Rule struct {
 	// Type is one of "enabledWhen", "requires", "disables", "anyOf",
 	// "eitherOf".
 	Type string `json:"type"`
 	// Field is the rule's subject: the tool it gates in the availability
-	// set, the property it governs in the input set. Empty means the
-	// declaring command's tool. Composite rules (anyOf, eitherOf) carry no
-	// field.
+	// set, the flag it constrains in the input set. Empty means the declaring
+	// command's tool in the availability set. On a requires or enabledWhen
+	// rule in the input set, it means the invocation as a whole. A disables
+	// rule acts through its Targets, and composite rules (anyOf, eitherOf)
+	// carry no field.
 	Field string `json:"field,omitempty"`
 	// Targets are the subjects a disables rule turns off.
 	Targets []string `json:"targets,omitempty"`
@@ -239,8 +242,9 @@ func Disables(targets []string, when *Expr, reason string) *Rule {
 }
 
 // AnyOf passes when any operand rule passes; all operands must target the
-// same subject (an empty field on every operand takes the declaring command's
-// tool, as in the availability set).
+// same subject: one named flag, or the invocation on a fieldless operand in
+// the input set. In the availability set a fieldless operand takes the
+// declaring command's tool.
 func AnyOf(rules ...*Rule) *Rule {
 	return &Rule{Type: RuleAnyOf, Rules: rules}
 }
@@ -607,10 +611,10 @@ func validateExpr(path string, expr *Expr, set ruleSet) error {
 
 // validateSameField enforces the composite contract all operands target the
 // same subject. In the availability set an empty field inherits the declaring
-// command's tool, so it passes against any reference; in the input set an empty
-// field is the invocation itself, so it is a subject that distinct named flags
-// cannot share. The Umpire runtime panics on this violation, so it is caught at
-// the declaration site instead.
+// command's tool, so it passes against any reference. In the input set an empty
+// field is the invocation itself, so distinct named flags cannot share it. The
+// Umpire runtime panics on this violation, so it is caught at the declaration
+// site instead.
 func validateSameField(path string, index int, set ruleSet, kind string, rules []*Rule) error {
 	reference := ""
 	seen := false

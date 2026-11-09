@@ -313,11 +313,11 @@ InputRules: []clicontract.Rule{
 The vocabulary is availability's, in the field dialect: `RequiresOn`/`Requires`,
 `EnabledOn`/`Enabled`, `Disables`, `AnyOf`, and `EitherOf` over `Present`, `Absent`,
 `Truthy`, `Falsy`, `Eq`, `In`, `NotIn`, `And`, `Or`, and `Not`. A rule names the
-flag it constrains in its field, and a `disables` target is a flag name. A rule
-with no field constrains the invocation as a whole instead. The dialects do not
-mix: availability rules compare conditions a consumer supplies at load, input
-rules compare the command's own inputs, and a declaration that crosses them
-fails at startup.
+flag it constrains in its field, and a `disables` target is a flag name. A
+`requires` or `enabledWhen` rule with no field constrains the invocation as a
+whole instead. The dialects do not mix: availability rules compare conditions a
+consumer supplies at load, input rules compare the command's own inputs, and a
+declaration that crosses them fails at startup.
 
 Every rule above is one-directional: a supplied `--roster-file` needs
 `--roster-entry`, while an entry can stand alone. A pair that must be given
@@ -332,10 +332,10 @@ InputRules: []clicontract.Rule{
 },
 ```
 
-A rule with no field constrains the invocation as a whole. It is checked on
-every invocation, including one that supplies no flags, so a command can require
-that at least one source is present without inventing a flag to carry the
-requirement:
+A `requires` or `enabledWhen` rule with no field constrains the invocation as a
+whole. It is checked on every invocation, including one that supplies no flags,
+so a command can require that at least one source is present without inventing a
+flag to carry the requirement:
 
 ```go
 InputRules: []clicontract.Rule{
@@ -351,8 +351,8 @@ InputRules: []clicontract.Rule{
 ```
 
 Absent and explicitly empty are different on the command line, but both fail
-`Truthy`, so `--loop-file=` does not satisfy the requirement. A rule that names
-a flag keeps its supplied-only meaning: it is reported only when that flag is
+`Truthy`, so `--loop-file=` does not satisfy the requirement. A rule with a
+field keeps its supplied-only meaning: it is reported only when that flag is
 given.
 
 A flag declared `Required` is checked at the same point, which moves that
@@ -361,8 +361,8 @@ failure from the handler to the parser.
 The rules validate with the rest of the surface and render into the command's
 schema entry as `input_rules`, beside `flags`, and into the [registry](registry/registry.go)
 manifest's tool block as `inputRules`, the key cli-registry already reads,
-before it starts the process. An invocation-wide rule renders with no `field`,
-so a consumer can tell it constrains the whole invocation.
+before it starts the process. An invocation-wide `requires` or `enabledWhen`
+rule renders with no `field`, while a `disables` rule acts through its `targets`.
 
 `Run` and `Parse` enforce them too, so a handler never re-checks a relationship
 the declaration already states: a violating invocation is a caller error (exit

@@ -173,9 +173,9 @@ type Command struct {
 	Availability []*Rule
 	// InputRules gate whether one invocation is legal: rules over the flags
 	// this command parses. Only leaf commands can declare them. A rule's
-	// Field and Targets name flag names; a rule with no Field constrains the
-	// whole invocation instead, and its condition must hold even when the
-	// caller supplies no flags.
+	// Field and Targets name flag names. A requires or enabledWhen rule with
+	// no Field constrains the whole invocation instead. Its condition must
+	// hold even when the caller supplies no flags.
 	InputRules []*Rule
 	// Output declares how the command's stdout is decoded and which exit
 	// codes mean success. Only leaf commands can declare it.

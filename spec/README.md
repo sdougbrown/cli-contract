@@ -84,18 +84,21 @@ from this document:
 
 A command's `input_rules` are Umpire rules in the field dialect over the
 command's flag names. A rule with a `field` names the flag it constrains, and
-it is a violation only when that flag is supplied. A rule with **no** `field`
-constrains the invocation as a whole: its `when` expression must hold on every
-invocation, including one that supplies no flags.
+it is a violation only when that flag is supplied. A `requires` or
+`enabledWhen` rule with **no** `field` constrains the invocation as a whole:
+its `when` expression must hold on every invocation, including one that
+supplies no flags. A `disables` rule acts through its `targets` in both slots
+and carries no field.
 
-Evaluate a fieldless rule's `when` over the supplied flag values with Umpire's
-field-dialect semantics. An absent flag and an explicitly empty string are both
-falsy for `truthy`, so `--flag=` does not satisfy a presence-or-value
+Evaluate a fieldless gate rule's `when` over the supplied flag values with
+Umpire's field-dialect semantics. An absent flag and an explicitly empty string
+are both falsy for `truthy`, so `--flag=` does not satisfy a presence-or-value
 requirement. A failing rule rejects the invocation with the rule's `reason`.
 
-Umpire requires every rule to name a field, so a consumer that feeds
-`input_rules` to an Umpire engine handles a fieldless rule separately, or
-compiles it onto a synthetic field reserved for the whole invocation.
+Umpire's `requires` and `enabledWhen` rules must name a field, so a consumer
+that feeds `input_rules` to an Umpire engine compiles a fieldless gate rule
+onto a synthetic field reserved for the whole invocation, leaving `anyOf` and
+`eitherOf` wrappers without a field as rendered.
 
 ## Validating a document
 

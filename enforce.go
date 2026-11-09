@@ -85,15 +85,15 @@ func (a *App) enforcement(c *Command, ancestors []*Command) (*inputEnforcement, 
 }
 
 // invocationField is the internal Umpire field an invocation-wide input rule
-// is compiled onto. Umpire requires every rule to name a subject, while the
-// declaration and the published documents carry the rule with no field. NUL
-// keeps the internal name clear of every flag a caller could type, and it never
-// reaches the wire.
+// is compiled onto. Umpire's requires and enabledWhen rules must name a field,
+// while the declaration and the published documents carry a fieldless gate
+// rule with no field. NUL keeps the internal name clear of every flag a caller
+// could type, and it never reaches the wire.
 const invocationField = "\x00invocation"
 
 // compileInputRules builds the Umpire engine from the same wire shape the
 // schema document and the manifest carry, so the runtime cannot evaluate a
-// contract the generated documents do not describe. A rule with no field is
+// contract the generated documents do not describe. A fieldless gate rule is
 // compiled onto invocationField; the returned flag reports whether any rule
 // did, so enforcement still runs when the caller supplied no flags.
 func compileInputRules(surface []Flag, rules []*Rule) (*umpire.Umpire, bool, error) {
@@ -149,7 +149,7 @@ func compileRuleValues(rules []*Rule) ([]Rule, bool) {
 }
 
 // compileRuleValue copies one rule, recursing through composites so a fieldless
-// operand reaches the engine with the invocation field too.
+// gate operand reaches the engine with the invocation field too.
 func compileRuleValue(rule *Rule) (Rule, bool) {
 	out := *rule
 	invocation := false
