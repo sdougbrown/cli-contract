@@ -720,6 +720,11 @@ func docHandlers() map[string]HandleFunc {
 // runner: a document must describe enough to rebuild the app that rendered it.
 func TestSchemaDocumentRoundTripsThroughApp(t *testing.T) {
 	app := schemaDocumentApp()
+	// The document must carry an invocation-wide rule back into the rebuilt
+	// declaration, not drop the fieldless form.
+	app.Commands[0].InputRules = []*Rule{
+		Requires(Or(Truthy("depth"), Truthy("timeout")), "a depth or timeout is required"),
+	}
 	// A handler-owned app must rebuild with the same convention: the apply-side
 	// copy of HandlerOwnedSignals is pinned by the round trip.
 	app.HandlerOwnedSignals = true

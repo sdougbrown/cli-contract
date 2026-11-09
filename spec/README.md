@@ -80,6 +80,26 @@ from this document:
 - Stream framing is not described in v1. A stream command may declare `raw` or
   no output mode.
 
+### Input rules and the invocation
+
+A command's `input_rules` are Umpire rules in the field dialect over the
+command's flag names. A rule with a `field` names the flag it constrains, and
+it is a violation only when that flag is supplied. A `requires` or
+`enabledWhen` rule with **no** `field` constrains the invocation as a whole:
+its `when` expression must hold on every invocation, including one that
+supplies no flags. A `disables` rule acts through its `targets` in both slots
+and carries no field.
+
+Evaluate a fieldless gate rule's `when` over the supplied flag values with
+Umpire's field-dialect semantics. An absent flag and an explicitly empty string
+are both falsy for `truthy`, so `--flag=` does not satisfy a presence-or-value
+requirement. A failing rule rejects the invocation with the rule's `reason`.
+
+Umpire's `requires` and `enabledWhen` rules must name a field, so a consumer
+that feeds `input_rules` to an Umpire engine compiles a fieldless gate rule
+onto a synthetic field reserved for the whole invocation, leaving `anyOf` and
+`eitherOf` wrappers without a field as rendered.
+
 ## Validating a document
 
 Any JSON Schema draft-07 validator validates a document against

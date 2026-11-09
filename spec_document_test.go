@@ -45,6 +45,24 @@ func docFactCopy(doc SchemaDocument) (map[string]any, error) {
 	return wire, nil
 }
 
+// TestSpecAcceptsInvocationWideInputRule pins the fieldless rule's presence in
+// a conforming document. The published schema already allows a rule with no
+// field; this keeps that true for the input slot, where it means the invocation
+// as a whole rather than one command's tool.
+func TestSpecAcceptsInvocationWideInputRule(t *testing.T) {
+	app := schemaDocumentApp()
+	app.Commands[0].InputRules = []*Rule{
+		Requires(Or(Truthy("depth"), Truthy("timeout")), "a depth or timeout is required"),
+	}
+	doc, err := app.SchemaDocument()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := validateDocument(t, doc); err != nil {
+		t.Fatalf("a fieldless input rule does not satisfy the spec:\n%v", err)
+	}
+}
+
 // TestSchemaDocumentMatchesTheSpec pins the contract between the rendering and
 // the published document schema: a document this library emits is a conforming
 // v1 document.
