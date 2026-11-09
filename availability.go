@@ -1,6 +1,9 @@
 package clicontract
 
-import "strings"
+import (
+	"fmt"
+	"strings"
+)
 
 // Umpire rule declarations. A command carries two independent rule sets over
 // one vocabulary:
@@ -9,7 +12,8 @@ import "strings"
 //     evaluated against inputs the consumer supplies at load time (profile
 //     mode, permission level, feature flags).
 //   - Command.InputRules gates whether one invocation is legal, over the
-//     command's own flags.
+//     command's own flags or, for a rule with no field, the invocation as a
+//     whole.
 //
 // The sets differ in subject namespace and dialect, not in rule type: a rule's
 // fields name tool names in the first set and flag names in the second. See the
@@ -97,7 +101,8 @@ type Expr struct {
 // namespace of the set it is declared in: tool names under
 // Command.Availability, flag names under Command.InputRules. In the
 // availability set a rule without an explicit Field applies to its own
-// command's tool; an input rule must name the flag it constrains.
+// command's tool; in the input set it applies to the invocation as a whole,
+// so its condition must hold even when the caller supplies no flags.
 type Rule struct {
 	// Type is one of "enabledWhen", "requires", "disables", "anyOf",
 	// "eitherOf".
@@ -187,7 +192,8 @@ func Not(expr *Expr) *Expr {
 }
 
 // Enabled enables the declaring command's tool only when the expression passes.
-// An empty reason takes the default "condition not met".
+// In the input set, Enabled with no field gates the invocation as a whole. An
+// empty reason takes the default "condition not met".
 func Enabled(when *Expr, reason string) *Rule {
 	return enabledRule("", RuleEnabledWhen, when, reason, "condition not met")
 }
@@ -201,7 +207,9 @@ func EnabledOn(field string, when *Expr, reason string) *Rule {
 }
 
 // Requires keeps the declaring command's tool gated until the condition is
-// met. An empty reason takes the default "required condition not met".
+// met. In the input set, Requires with no field declares a condition every
+// invocation must satisfy. An empty reason takes the default "required
+// condition not met".
 func Requires(when *Expr, reason string) *Rule {
 	return enabledRule("", RuleRequires, when, reason, "required condition not met")
 }
@@ -377,7 +385,7 @@ func validateInputRules(path string, rules []*Rule, flags []Flag) error {
 	// A rule set that passes the checks above but that Umpire's schema rejects
 	// would otherwise fail at first dispatch, where it reads as a caller error
 	// instead of the declaration defect it is.
-	if _, err := compileInputRules(flags, rules); err != nil {
+	if _, _, err := compileInputRules(flags, rules); err != nil {
 		return inputRuleCompileError(path, err)
 	}
 	return nil
@@ -443,15 +451,9 @@ func validateRule(path string, index int, rule *Rule, set ruleSet) error {
 		}
 		if rule.Type != RuleDisables && set.fields != nil {
 			// In the availability set an empty Field means the declaring
-			// command's tool; an input rule has no such default, so the flag
-			// it constrains is mandatory and must exist.
-			if rule.Field == "" {
-				return UsageErrorf(
-					"command %q %s rule %d (%s) has no field; input rules name the flag they constrain",
-					path, set.label, index, rule.Type,
-				)
-			}
-			if !set.fields[rule.Field] {
+			// command's tool; in the input set it means the invocation as a
+			// whole. Only a named field resolves against the flag surface.
+			if rule.Field != "" && !set.fields[rule.Field] {
 				return UsageErrorf(
 					"command %q %s rule %d (%s) names unknown flag %q",
 					path, set.label, index, rule.Type, rule.Field,
@@ -604,27 +606,49 @@ func validateExpr(path string, expr *Expr, set ruleSet) error {
 }
 
 // validateSameField enforces the composite contract all operands target the
-// same subject: distinct explicit fields fail; empty fields inherit the
-// declaring command's tool and pass. The Umpire runtime panics on this
-// violation, so it is caught at the declaration site instead.
+// same subject. In the availability set an empty field inherits the declaring
+// command's tool, so it passes against any reference; in the input set an empty
+// field is the invocation itself, so it is a subject that distinct named flags
+// cannot share. The Umpire runtime panics on this violation, so it is caught at
+// the declaration site instead.
 func validateSameField(path string, index int, set ruleSet, kind string, rules []*Rule) error {
-	explicit := ""
+	reference := ""
+	seen := false
 	for _, inner := range rules {
 		if inner == nil {
 			continue
 		}
-		if inner.Field != "" {
-			if explicit == "" {
-				explicit = inner.Field
-			} else if explicit != inner.Field {
-				return UsageErrorf(
-					"command %q %s rule %d (%s) operands target different %s %q and %q",
-					path, set.label, index, kind, set.subject(), explicit, inner.Field,
-				)
-			}
+		if inner.Field == "" && set.fields == nil {
+			continue
 		}
+		if !seen {
+			reference = inner.Field
+			seen = true
+			continue
+		}
+		if inner.Field == reference {
+			continue
+		}
+		if reference != "" && inner.Field != "" {
+			return UsageErrorf(
+				"command %q %s rule %d (%s) operands target different %s %q and %q",
+				path, set.label, index, kind, set.subject(), reference, inner.Field,
+			)
+		}
+		return UsageErrorf(
+			"command %q %s rule %d (%s) operands target different subjects: %s and %s",
+			path, set.label, index, kind, set.subjectName(reference), set.subjectName(inner.Field),
+		)
 	}
 	return nil
+}
+
+// subjectName renders one rule subject for diagnostics.
+func (s ruleSet) subjectName(field string) string {
+	if field == "" {
+		return "the invocation"
+	}
+	return fmt.Sprintf("%s %q", s.subject(), field)
 }
 
 // subject names what a set's fields refer to, for diagnostics.

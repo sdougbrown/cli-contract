@@ -116,15 +116,6 @@ func TestInputRulesDeclarationValidation(t *testing.T) {
 			want: `names unknown flag "roster-fiel"`,
 		},
 		{
-			name: "missing subject flag",
-			mutate: func(a *App) {
-				a.Commands[0].InputRules = []*Rule{
-					Requires(Present("roster-entry"), ""),
-				}
-			},
-			want: "input rules name the flag they constrain",
-		},
-		{
 			name: "unknown compared flag",
 			mutate: func(a *App) {
 				a.Commands[0].InputRules = []*Rule{
@@ -246,6 +237,46 @@ func TestInputRulesDeclarationValidation(t *testing.T) {
 	}
 }
 
+// TestInvocationRequirementDeclaration pins the fieldless input rule: a rule
+// with no field constrains the invocation as a whole, and its expression still
+// validates against the command's flag surface. A composite cannot span the
+// invocation and one flag.
+func TestInvocationRequirementDeclaration(t *testing.T) {
+	app := inputRulesApp()
+	app.Commands[0].InputRules = []*Rule{
+		Requires(Or(Truthy("roster-file"), Truthy("prompt-file")), "one source is required"),
+		Enabled(Or(Present("roster-entry"), Present("prompt")), "an entry or prompt is required"),
+	}
+	app.Tree() // must not panic
+
+	// The expression still names only real flags.
+	bad := inputRulesApp()
+	bad.Commands[0].InputRules = []*Rule{
+		Requires(Truthy("roster-fiel"), "one source is required"),
+	}
+	expectDeclarationPanic(t, bad, `references unknown flag "roster-fiel"`)
+
+	// A composite subject is either the invocation or one flag, never both.
+	mixed := inputRulesApp()
+	mixed.Commands[0].InputRules = []*Rule{
+		AnyOf(
+			Requires(Truthy("roster-file"), ""),
+			RequiresOn("prompt", Present("prompt-file"), ""),
+		),
+	}
+	expectDeclarationPanic(t, mixed, "operands target different subjects")
+
+	// Fieldless operands agree on the invocation.
+	fieldless := inputRulesApp()
+	fieldless.Commands[0].InputRules = []*Rule{
+		AnyOf(
+			Requires(Truthy("roster-file"), "a roster is required"),
+			Requires(Truthy("prompt-file"), "a prompt is required"),
+		),
+	}
+	fieldless.Tree()
+}
+
 // TestInputRulesRejectInheritedFlags pins the flags an input rule may name: the
 // app's common flags and the leaf's own. An ancestor's persistent flag parses on
 // the leaf but cannot become a manifest property, because the argv binding has
@@ -335,6 +366,38 @@ func TestSchemaRendersInputRules(t *testing.T) {
 	}
 }
 
+// TestSchemaRendersInvocationRequirement pins the fieldless rule on the wire:
+// the rule keeps its type, condition, and reason but carries no field, so a
+// consumer can tell it constrains the invocation rather than one flag.
+func TestSchemaRendersInvocationRequirement(t *testing.T) {
+	app := invocationRequirementApp()
+	b, err := json.Marshal(app.Schemas()["verify"])
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got map[string]any
+	if err := json.Unmarshal(b, &got); err != nil {
+		t.Fatal(err)
+	}
+	rules, ok := got["input_rules"].([]any)
+	if !ok || len(rules) != 2 {
+		t.Fatalf("input_rules = %#v, want the declared rules", got["input_rules"])
+	}
+	first := rules[0].(map[string]any)
+	if _, ok := first["field"]; ok {
+		t.Errorf("invocation rule carries a field: %#v", first)
+	}
+	if first["type"] != RuleRequires {
+		t.Errorf("type = %v, want %q", first["type"], RuleRequires)
+	}
+	if first["reason"] != invocationRequirementReason {
+		t.Errorf("reason = %v, want the declared reason", first["reason"])
+	}
+	if when, ok := first["when"].(map[string]any); !ok || when["op"] != OpOr {
+		t.Errorf("when = %#v, want the Or expression", first["when"])
+	}
+}
+
 // enforcingInputRulesApp declares the relationship set the issue's avenor
 // examples describe.
 func enforcingInputRulesApp() *App {
@@ -411,6 +474,128 @@ func TestEnforceInputRules(t *testing.T) {
 		t.Error("Parse accepted an invocation the rules reject")
 	} else if !strings.Contains(err.Error(), "a roster file needs an entry") {
 		t.Errorf("Parse error = %q, want the rule's reason", err)
+	}
+}
+
+// invocationRequirementApp mirrors the avenor verify case: at least one
+// non-empty config source, plus a field-gated rule that must keep its
+// supplied-only meaning beside the invocation-wide one.
+func invocationRequirementApp() *App {
+	return &App{
+		Name:      "verify",
+		Version:   "v1",
+		RootShort: "test cli",
+		Commands: []*Command{{
+			Name:  "verify",
+			Short: "verify a roster",
+			Flags: []Flag{
+				{Name: "loop-file", Kind: String, Usage: "loop file path"},
+				{Name: "team-file", Kind: String, Usage: "team file path"},
+				{Name: "roster-file", Kind: String, Usage: "roster file path"},
+				{Name: "roster-entry", Kind: String, Usage: "roster entry name"},
+			},
+			InputRules: []*Rule{
+				Requires(
+					Or(Truthy("loop-file"), Truthy("team-file"), Truthy("roster-file")),
+					"one of --loop-file, --team-file, or --roster-file is required",
+				),
+				RequiresOn("roster-file", Present("roster-entry"), "a roster file needs an entry"),
+			},
+			Handle: func(ctx context.Context, inv Invocation, stderr io.Writer) (any, error) {
+				return map[string]any{"status": "ok"}, nil
+			},
+		}},
+	}
+}
+
+const invocationRequirementReason = "one of --loop-file, --team-file, or --roster-file is required"
+
+// TestEnforceInvocationRequirement runs the issue's example through both entry
+// points: an invocation with no config flags, or only empty ones, is rejected;
+// any one non-empty source satisfies the requirement; and a field rule beside
+// it keeps its supplied-only meaning.
+func TestEnforceInvocationRequirement(t *testing.T) {
+	cases := []struct {
+		name   string
+		argv   []string
+		code   int
+		reason string
+	}{
+		{
+			name:   "no flags",
+			argv:   []string{"verify"},
+			code:   2,
+			reason: invocationRequirementReason,
+		},
+		{
+			name:   "explicitly empty source",
+			argv:   []string{"verify", "--loop-file="},
+			code:   2,
+			reason: invocationRequirementReason,
+		},
+		{
+			name:   "two explicitly empty sources",
+			argv:   []string{"verify", "--loop-file=", "--team-file="},
+			code:   2,
+			reason: invocationRequirementReason,
+		},
+		{
+			name: "one non-empty source",
+			argv: []string{"verify", "--team-file=foo"},
+			code: 0,
+		},
+		{
+			name: "roster file with its entry",
+			argv: []string{"verify", "--roster-file=r.json", "--roster-entry=main"},
+			code: 0,
+		},
+		{
+			name:   "field rule still applies when its flag is supplied",
+			argv:   []string{"verify", "--roster-file=r.json"},
+			code:   2,
+			reason: "a roster file needs an entry",
+		},
+		{
+			name:   "entry alone does not satisfy the requirement",
+			argv:   []string{"verify", "--roster-entry=main"},
+			code:   2,
+			reason: invocationRequirementReason,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			adapter := &testAdapter{}
+			code, stdout, stderr := runApp(t, invocationRequirementApp(), adapter, tc.argv...)
+			if code != tc.code {
+				t.Fatalf("exit code = %d, want %d (stderr: %s)", code, tc.code, stderr)
+			}
+			if tc.reason == "" {
+				return
+			}
+			var envelope map[string]any
+			if err := json.Unmarshal([]byte(stdout), &envelope); err != nil {
+				t.Fatalf("stdout is not one JSON value: %v (%q)", err, stdout)
+			}
+			errObj := envelope["error"].(map[string]any)
+			if errObj["code"] != "usage" {
+				t.Errorf("error code = %v, want usage", errObj["code"])
+			}
+			if msg, _ := errObj["message"].(string); !strings.Contains(msg, tc.reason) {
+				t.Errorf("message = %q, want it to include %q", msg, tc.reason)
+			}
+		})
+	}
+
+	if _, err := Parse(invocationRequirementApp(), []string{"verify"}); err == nil {
+		t.Error("Parse accepted an invocation the requirement rejects")
+	} else if !strings.Contains(err.Error(), invocationRequirementReason) {
+		t.Errorf("Parse error = %q, want the rule's reason", err)
+	}
+	if _, err := Parse(invocationRequirementApp(), []string{"verify", "--team-file=foo"}); err != nil {
+		t.Errorf("Parse rejected a satisfied invocation: %v", err)
+	}
+	if _, err := Parse(invocationRequirementApp(), []string{"verify", "--loop-file="}); err == nil {
+		t.Error("Parse accepted an explicitly empty source")
 	}
 }
 

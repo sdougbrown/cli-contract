@@ -372,7 +372,8 @@ func resolveTargets(appName string, tools map[string]toolShape, rules []*clicont
 
 // buildTool renders one leaf command as a tool. Input rules render beside the
 // input schema; a rule that names a flag the manifest omits is an error, so the
-// generated block cannot dangle.
+// generated block cannot dangle. A rule with no field renders with no field and
+// constrains the invocation as a whole.
 func buildTool(opts Options, timeout string, appName string, path []string, cmd *clicontract.Command, common []clicontract.Flag) (toolShape, error) {
 	full := strings.Join(path, " ")
 	command := append([]string{opts.Binary}, path...)
@@ -548,15 +549,9 @@ func validateInputRuleSubjects(path string, rules []*clicontract.Rule, props map
 		if rule == nil {
 			return nil
 		}
-		// Manifest is a direct entry point, so it repeats the declaration
-		// checks it depends on: a gate rule with no subject would render an
-		// input rule that constrains nothing.
-		if (rule.Type == clicontract.RuleEnabledWhen || rule.Type == clicontract.RuleRequires) && rule.Field == "" {
-			return fmt.Errorf(
-				"command %q input rule (%s) has no field; an input rule names the flag it constrains",
-				path, rule.Type,
-			)
-		}
+		// A gate rule with no field constrains the invocation as a whole, not
+		// one property, so it has no subject to resolve. Its expression still
+		// names properties, and walkExpr checks those below.
 		if rule.Field != "" {
 			if err := check(rule.Field); err != nil {
 				return err

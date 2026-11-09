@@ -109,7 +109,7 @@
         "input_rules": {
           "type": "array",
           "items": { "$ref": "#/definitions/rule" },
-          "description": "Umpire rules over this command's flags: which combinations of inputs are legal."
+          "description": "Umpire rules over this command's flags: which combinations of inputs are legal. A rule with no field constrains the invocation as a whole and must hold on every invocation."
         },
         "availability": {
           "type": "array",
@@ -229,7 +229,7 @@
         "field": {
           "type": "string",
           "minLength": 1,
-          "description": "The rule's subject: a tool name in availability, a flag name in input rules. Absent gates the declaring command's own tool."
+          "description": "The rule's subject: a tool name in availability, a flag name in input rules. Absent gates the declaring command's own tool in availability, and the invocation as a whole in input rules."
         },
         "targets": {
           "type": "array",

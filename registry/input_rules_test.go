@@ -249,17 +249,148 @@ func TestManifestInputRulesUnexposedSubjectIsTheSubject(t *testing.T) {
 	}
 }
 
-// TestManifestInputRulesRejectSubjectless ties the manifest to the declaration
-// rule that an input rule names its subject, since Manifest is callable on an
-// app that never went through Tree.
-func TestManifestInputRulesRejectSubjectless(t *testing.T) {
+// invocationRequirementApp mirrors the avenor verify case: one non-empty config
+// source is required on every invocation.
+func invocationRequirementApp() *clicontract.App {
+	return &clicontract.App{
+		Name:      "testcli",
+		Version:   "vtest",
+		RootShort: "test cli",
+		Commands: []*clicontract.Command{{
+			Name:   "verify",
+			Short:  "verify a roster",
+			Handle: noopHandle,
+			Flags: []clicontract.Flag{
+				{Name: "loop-file", Kind: clicontract.String, Usage: "loop file path"},
+				{Name: "team-file", Kind: clicontract.String, Usage: "team file path"},
+				{Name: "roster-file", Kind: clicontract.String, Usage: "roster file path"},
+			},
+			InputRules: []*clicontract.Rule{
+				clicontract.Requires(
+					clicontract.Or(
+						clicontract.Truthy("loop-file"),
+						clicontract.Truthy("team-file"),
+						clicontract.Truthy("roster-file"),
+					),
+					"one of --loop-file, --team-file, or --roster-file is required",
+				),
+			},
+		}},
+	}
+}
+
+const invocationRequirementReason = "one of --loop-file, --team-file, or --roster-file is required"
+
+// TestManifestRendersInvocationRequirement pins the fieldless rule on the
+// manifest wire: it keeps its type, condition, and reason but carries no field,
+// so a consumer can tell it constrains the invocation as a whole.
+func TestManifestRendersInvocationRequirement(t *testing.T) {
+	manifest, err := Manifest(invocationRequirementApp(), Options{Binary: "testcli"})
+	if err != nil {
+		t.Fatalf("manifest: %v", err)
+	}
+	_, rules := decodeTool(t, manifest, "testcli-verify")
+	if len(rules) != 1 {
+		t.Fatalf("inputRules = %#v, want the declared requirement", rules)
+	}
+	rule := rules[0].(map[string]any)
+	if _, ok := rule["field"]; ok {
+		t.Errorf("invocation rule carries a field: %#v", rule)
+	}
+	if rule["type"] != "requires" {
+		t.Errorf("type = %v, want requires", rule["type"])
+	}
+	if rule["reason"] != invocationRequirementReason {
+		t.Errorf("reason = %v, want the declared reason", rule["reason"])
+	}
+}
+
+// TestManifestInputRulesUnexposedInvocationFlag fails a fieldless requirement
+// whose expression names a common flag the manifest does not expose.
+func TestManifestInputRulesUnexposedInvocationFlag(t *testing.T) {
 	app := inputRulesApp()
 	app.Commands[0].InputRules = []*clicontract.Rule{
-		clicontract.Requires(clicontract.Present("file"), "a subjectless rule"),
+		clicontract.Requires(clicontract.Truthy("verbose"), "verbose is required"),
 	}
 	_, err := Manifest(app, Options{Binary: "testcli"})
-	if err == nil || !strings.Contains(err.Error(), "has no field") {
-		t.Fatalf("err = %v, want the subjectless rule refused", err)
+	if err == nil || !strings.Contains(err.Error(), `"verbose"`) {
+		t.Fatalf("err = %v, want the unexposed flag named", err)
+	}
+}
+
+// TestManifestInvocationRequirementGating compiles the fieldless rule the way a
+// consumer must, on a synthetic field, and checks the Umpire expression
+// distinguishes absent from explicitly empty values.
+func TestManifestInvocationRequirementGating(t *testing.T) {
+	const invocationField = "$invocation"
+	manifest, err := Manifest(invocationRequirementApp(), Options{Binary: "testcli"})
+	if err != nil {
+		t.Fatalf("manifest: %v", err)
+	}
+	props, rules := decodeTool(t, manifest, "testcli-verify")
+	fields := make(map[string]any, len(props)+1)
+	for name := range props {
+		fields[name] = map[string]any{}
+	}
+	fields[invocationField] = map[string]any{}
+
+	var pin func(map[string]any)
+	pin = func(rule map[string]any) {
+		if rule["type"] == "requires" || rule["type"] == "enabledWhen" {
+			if _, ok := rule["field"]; !ok {
+				rule["field"] = invocationField
+			}
+		}
+		if inner, ok := rule["rules"].([]any); ok {
+			for _, r := range inner {
+				pin(r.(map[string]any))
+			}
+		}
+		if branches, ok := rule["branches"].(map[string]any); ok {
+			for _, branch := range branches {
+				for _, r := range branch.([]any) {
+					pin(r.(map[string]any))
+				}
+			}
+		}
+	}
+	for _, rule := range rules {
+		pin(rule.(map[string]any))
+	}
+
+	schema, err := umpire.SchemaFromObject(map[string]any{"version": float64(1), "fields": fields, "rules": rules})
+	if err != nil {
+		t.Fatalf("generated invocation rule fails the Umpire contract: %v", err)
+	}
+	engine, err := umpire.NewFromSchema(schema)
+	if err != nil {
+		t.Fatalf("compiled invocation-rule engine: %v", err)
+	}
+
+	cases := []struct {
+		name   string
+		values map[string]any
+		want   bool
+	}{
+		{name: "no values", values: map[string]any{}, want: false},
+		{name: "explicitly empty", values: map[string]any{"loop-file": ""}, want: false},
+		{name: "one non-empty", values: map[string]any{"team-file": "foo"}, want: true},
+		{name: "all empty", values: map[string]any{"loop-file": "", "team-file": ""}, want: false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			status, err := engine.Check(tc.values, nil, nil)
+			if err != nil {
+				t.Fatalf("evaluation: %v", err)
+			}
+			got := status[invocationField]
+			if got.Enabled != tc.want {
+				t.Errorf("invocation enabled = %v, want %v (reason %q)", got.Enabled, tc.want, got.Reason)
+			}
+			if !tc.want && got.Reason != invocationRequirementReason {
+				t.Errorf("reason = %q, want %q", got.Reason, invocationRequirementReason)
+			}
+		})
 	}
 }
 
