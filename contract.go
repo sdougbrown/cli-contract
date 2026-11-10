@@ -15,6 +15,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"math"
 	"strings"
 	"time"
 
@@ -46,6 +47,11 @@ const (
 	// binds a time.Duration either way.
 	DurationMS
 )
+
+// maxDurationMS bounds a duration_ms value: the milliseconds-to-Duration
+// product wraps past it, so the declaration, the parser, and the rule-value
+// validation all enforce this one bound.
+const maxDurationMS = math.MaxInt64 / int64(time.Millisecond)
 
 // Flag declares one flag of one command. Usage is rendered in help and in
 // the schema document; the same declaration feeds both surfaces.
@@ -457,6 +463,37 @@ func (c *Command) ValidateOutput(path string) error {
 // inherited flags the list does not shadow, then the list's own, in
 // registration order.
 //
+// validateFlagDefault checks one flag's declared default against its kind.
+// The published document renders the default the parser applies, so a
+// default the parser would silently ignore is a divergence between the
+// contract and the runtime: it fails here, at the declaration site.
+func validateFlagDefault(where string, f Flag) error {
+	switch f.Kind {
+	case Duration:
+		if f.Default != nil {
+			if _, ok := f.Default.(time.Duration); !ok {
+				return UsageErrorf("%s flag %q has a %T default; a duration default is a time.Duration", where, f.Name, f.Default)
+			}
+		}
+	case DurationMS:
+		switch v := f.Default.(type) {
+		case nil:
+		case int:
+			if int64(v) > maxDurationMS || int64(v) < -maxDurationMS {
+				return UsageErrorf("%s flag %q has an out-of-range default: the largest duration_ms value is %d milliseconds", where, f.Name, maxDurationMS)
+			}
+		case int64:
+			if v > maxDurationMS || v < -maxDurationMS {
+				return UsageErrorf("%s flag %q has an out-of-range default: the largest duration_ms value is %d milliseconds", where, f.Name, maxDurationMS)
+			}
+		case time.Duration:
+		default:
+			return UsageErrorf("%s flag %q has a %T default; a duration_ms default is a whole number of milliseconds", where, f.Name, f.Default)
+		}
+	}
+	return nil
+}
+
 // pflag panics at registration on a repeated name or a shared shorthand, so
 // both are caller errors here. A flag named "help" anywhere in the surface
 // keeps cobra from claiming the "h" shorthand for its own help flag. A common
@@ -471,6 +508,9 @@ func validateFlags(where string, inherited []surfaceFlag, flags []Flag, commonNa
 		case String, Bool, Repeat, Int, Duration, DurationMS:
 		default:
 			return nil, UsageErrorf("%s flag %q has unknown kind %d", where, f.Name, f.Kind)
+		}
+		if err := validateFlagDefault(where, f); err != nil {
+			return nil, err
 		}
 		if f.Usage == "" {
 			return nil, UsageErrorf("%s flag %q has no usage string", where, f.Name)

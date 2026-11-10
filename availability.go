@@ -679,23 +679,22 @@ func canonicalDurationValue(path string, set ruleSet, field string, value any) e
 func durationMSValue(path string, set ruleSet, field string, value any) error {
 	// A rule value past the milliseconds bound can never match: the
 	// parser rejects the input that would bind there (tree.go's parse
-	// path enforces the same bound).
-	const maxMS = math.MaxInt64 / int64(time.Millisecond)
+	// path enforces maxDurationMS).
 	outOfRange := "a duration_ms comparison value is a whole number of milliseconds within ±%d"
 	switch n := value.(type) {
 	case int:
-		if int64(n) > maxMS || int64(n) < -maxMS {
-			return UsageErrorf("command %q %s expression compares duration flag %q against %v; "+outOfRange, path, set.label, field, value, maxMS)
+		if int64(n) > maxDurationMS || int64(n) < -maxDurationMS {
+			return UsageErrorf("command %q %s expression compares duration flag %q against %v; "+outOfRange, path, set.label, field, value, maxDurationMS)
 		}
 		return nil
 	case int64:
-		if n > maxMS || n < -maxMS {
-			return UsageErrorf("command %q %s expression compares duration flag %q against %v; "+outOfRange, path, set.label, field, value, maxMS)
+		if n > maxDurationMS || n < -maxDurationMS {
+			return UsageErrorf("command %q %s expression compares duration flag %q against %v; "+outOfRange, path, set.label, field, value, maxDurationMS)
 		}
 		return nil
 	case float64:
-		if n != math.Trunc(n) || n > float64(maxMS) || n < -float64(maxMS) {
-			return UsageErrorf("command %q %s expression compares duration flag %q against %v; "+outOfRange, path, set.label, field, value, maxMS)
+		if n != math.Trunc(n) || n > float64(maxDurationMS) || n < -float64(maxDurationMS) {
+			return UsageErrorf("command %q %s expression compares duration flag %q against %v; "+outOfRange, path, set.label, field, value, maxDurationMS)
 		}
 		return nil
 	default:

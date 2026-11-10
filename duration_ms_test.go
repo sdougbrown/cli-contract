@@ -155,6 +155,7 @@ func TestDurationMSRuleValuesAreNumbers(t *testing.T) {
 		valid bool
 	}{
 		{"whole number eq", Eq("wait", 1500), "", true},
+		{"int64 rule value", Eq("wait", int64(1500)), "", true},
 		{"whole number membership", In("wait", 1500, 3000), "", true},
 		{"duration string value", Eq("wait", "1.5s"), "a duration_ms comparison value is a whole number of milliseconds", false},
 		{"fractional value", Eq("wait", 1.5), "a whole number of milliseconds", false},
@@ -242,6 +243,119 @@ func TestConsumerEvaluatesDurationMSRuleLikeTheParser(t *testing.T) {
 	}
 }
 
+// TestDurationMSDeclarationDefaults pins the default's declaration contract:
+// the natural spellings (int, int64, time.Duration) apply at parse time and
+// render as the same number the document publishes, while a default of
+// another type fails at the declaration instead of silently applying zero.
+func TestDurationMSDeclarationDefaults(t *testing.T) {
+	// An int default is the kind's natural spelling: it applies and renders.
+	app := durationMSApp()
+	app.Commands[0].Flags[0].Default = 2000
+	inv, err := Parse(app, []string{"wait"})
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if got := inv.Durations["wait"]; got != 2*time.Second {
+		t.Errorf("default Durations[wait] = %v, want 2s", got)
+	}
+	doc, err := app.SchemaDocument()
+	if err != nil {
+		t.Fatalf("schema document: %v", err)
+	}
+	if doc.Commands["wait"].Flags["wait"].Default != float64(2000) && doc.Commands["wait"].Flags["wait"].Default != int64(2000) && doc.Commands["wait"].Flags["wait"].Default != 2000 {
+		t.Errorf("published default = %#v, want 2000", doc.Commands["wait"].Flags["wait"].Default)
+	}
+
+	// The in-memory path (no JSON round trip) rebuilds the default too:
+	// the document carries an int64 here, and the rebuilt parser applies it.
+	inMemory, err := doc.App(map[string]HandleFunc{"wait": func(ctx context.Context, inv Invocation, stderr io.Writer) (any, error) {
+		return map[string]any{"status": "ok"}, nil
+	}})
+	if err != nil {
+		t.Fatalf("rebuild in memory: %v", err)
+	}
+	inv, err = Parse(inMemory, []string{"wait"})
+	if err != nil {
+		t.Fatalf("in-memory parse: %v", err)
+	}
+	if got := inv.Durations["wait"]; got != 2*time.Second {
+		t.Errorf("in-memory default Durations[wait] = %v, want 2s", got)
+	}
+
+	// A default of another type is a declaration defect: the parser would
+	// apply zero while the document rendered the value.
+	cases := []struct {
+		name string
+		def  any
+		want string
+	}{
+		{"duration_ms string default", "2s", "a duration_ms default is a whole number of milliseconds"},
+		{"duration_ms fractional default", 1.0e13, "a duration_ms default is a whole number of milliseconds"},
+		{"duration_ms out-of-range default", int64(1) << 62, "out-of-range default"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			defer func() {
+				r := recover()
+				if r == nil {
+					t.Fatalf("declaration accepted a %#v default", tc.def)
+				}
+				if msg := fmt.Sprint(r); !strings.Contains(msg, tc.want) {
+					t.Errorf("error %q does not include %q", msg, tc.want)
+				}
+			}()
+			bad := durationMSApp()
+			bad.Commands[0].Flags[0].Default = tc.def
+			bad.Tree()
+		})
+	}
+
+	// The go-duration kind carries the same contract for its own default.
+	defer func() {
+		r := recover()
+		if r == nil {
+			t.Fatal("declaration accepted a duration default that is not a time.Duration")
+		}
+		if msg := fmt.Sprint(r); !strings.Contains(msg, "a duration default is a time.Duration") {
+			t.Errorf("error %q does not name the default type", msg)
+		}
+	}()
+	goDefault := &App{
+		Name:      "t",
+		Version:   "v1",
+		RootShort: "test cli",
+		Commands: []*Command{{
+			Name:  "wait",
+			Short: "wait for something",
+			Flags: []Flag{{Name: "wait", Kind: Duration, Usage: "how long", Default: "2s"}},
+			Handle: func(ctx context.Context, inv Invocation, stderr io.Writer) (any, error) {
+				return map[string]any{"status": "ok"}, nil
+			},
+		}},
+	}
+	goDefault.Tree()
+}
+
+// TestDurationMSFractionalDefaultRejection covers the published-document
+// path: a hand-written duration_ms default that is not a whole number of
+// milliseconds fails the rebuild instead of silently truncating.
+func TestDurationMSFractionalDefaultRejection(t *testing.T) {
+	doc := SchemaDocument{
+		Schema: SchemaDocumentV1,
+		Name:   "t",
+		Commands: map[string]CommandSchema{"wait": {
+			Short: "wait for something",
+			Flags: map[string]FlagSchema{"wait": {Kind: "duration_ms", Usage: "how long", Default: 3.5}},
+		}},
+	}
+	handlers := map[string]HandleFunc{"wait": func(ctx context.Context, inv Invocation, stderr io.Writer) (any, error) {
+		return map[string]any{"status": "ok"}, nil
+	}}
+	if _, err := doc.App(handlers); err == nil || !strings.Contains(err.Error(), "not a whole number of milliseconds") {
+		t.Errorf("rebuild with a fractional default: %v, want a whole-number rejection", err)
+	}
+}
+
 // TestDurationMSDocumentSatisfiesTheSpec runs the rendered document through
 // the published JSON Schema — the check that keeps the kind's vocabulary
 // from drifting between the renderer and the spec.
@@ -268,11 +382,13 @@ func TestDurationMSBounds(t *testing.T) {
 		t.Fatalf("in-range default: %v", err)
 	}
 	huge := 1.0e13 // past MaxInt64/1e6 ≈ 9.2e12
-	bad := durationMSApp()
-	bad.Commands[0].Flags[0].Default = huge
-	data, err := bad.SchemaDocument()
-	if err != nil {
-		t.Fatalf("schema document: %v", err)
+	data := SchemaDocument{
+		Schema: SchemaDocumentV1,
+		Name:   "t",
+		Commands: map[string]CommandSchema{"wait": {
+			Short: "wait for something",
+			Flags: map[string]FlagSchema{"wait": {Kind: "duration_ms", Usage: "how long", Default: huge}},
+		}},
 	}
 	parsed, err := ParseSchemaDocument(mustJSON(t, data))
 	if err != nil {
