@@ -358,6 +358,16 @@ given.
 A flag declared `Required` is checked at the same point, which moves that
 failure from the handler to the parser.
 
+A duration flag compares canonically: the parser reads the caller's spelling
+as its canonical Go duration string, so `--wait=0m` and `--wait=0s` both
+satisfy `Eq("wait", "0s")`, and `--wait=90s` satisfies `Eq("wait",
+"1m30s")`. Write rule values in that canonical form; the declaration validation
+rejects a non-canonical value at startup. A consumer evaluating
+the emitted rules applies the same normalization — the schema document's
+`kind: "duration"` flag and the manifest's `format: "go-duration"` property
+mark the inputs to normalize — and the [spec](spec/README.md) pins this so
+the two sides cannot disagree on equivalent spellings.
+
 The rules validate with the rest of the surface and render into the command's
 schema entry as `input_rules`, beside `flags`, and into the [registry](registry/registry.go)
 manifest's tool block as `inputRules`, the key cli-registry already reads,

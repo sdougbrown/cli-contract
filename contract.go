@@ -34,6 +34,9 @@ const (
 	// Int is an integer-valued flag.
 	Int
 	// Duration is a time.Duration flag parsed from a Go duration string.
+	// Input rules compare its canonical spelling: the caller's input
+	// normalizes (0m evaluates as 0s), so a rule value is written in
+	// that form.
 	Duration
 )
 

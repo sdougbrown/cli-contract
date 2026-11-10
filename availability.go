@@ -3,6 +3,7 @@ package clicontract
 import (
 	"fmt"
 	"strings"
+	"time"
 )
 
 // Umpire rule declarations. A command carries two independent rule sets over
@@ -377,10 +378,14 @@ func exposableSurface(common, own []Flag) []Flag {
 // declaration site rather than in a generated manifest.
 func validateInputRules(path string, rules []*Rule, flags []Flag) error {
 	fields := make(map[string]bool, len(flags))
+	durations := make(map[string]bool, len(flags))
 	for _, f := range flags {
 		fields[f.Name] = true
+		if f.Kind == Duration {
+			durations[f.Name] = true
+		}
 	}
-	set := ruleSet{label: "input", fields: fields}
+	set := ruleSet{label: "input", fields: fields, durations: durations}
 	for i, rule := range rules {
 		if err := validateRule(path, i, rule, set); err != nil {
 			return err
@@ -427,6 +432,10 @@ type ruleSet struct {
 	// availability set, whose explicit fields resolve against the tool set
 	// after the walk.
 	fields map[string]bool
+	// durations names the duration flags among fields, so a comparison
+	// value on one can be checked against the canonical form evaluation
+	// compares. Nil in the availability set, which has no flag kinds.
+	durations map[string]bool
 }
 
 // validateRule checks one rule against the set it was declared in, recursing
@@ -585,6 +594,20 @@ func validateExpr(path string, expr *Expr, set ruleSet) error {
 				"command %q %s expression references unknown flag %q", path, set.label, expr.Field,
 			)
 		}
+		if set.durations[expr.Field] {
+			switch expr.Op {
+			case OpEq:
+				if err := canonicalDurationValue(path, set, expr.Field, expr.Value); err != nil {
+					return err
+				}
+			case OpIn, OpNotIn:
+				for _, value := range expr.Values {
+					if err := canonicalDurationValue(path, set, expr.Field, value); err != nil {
+						return err
+					}
+				}
+			}
+		}
 	case OpAnd, OpOr:
 		if len(expr.Exprs) == 0 {
 			return UsageErrorf(
@@ -604,6 +627,34 @@ func validateExpr(path string, expr *Expr, set ruleSet) error {
 	default:
 		return UsageErrorf(
 			"command %q %s expression has unknown op %q", path, set.label, expr.Op,
+		)
+	}
+	return nil
+}
+
+// canonicalDurationValue checks one comparison value against a duration
+// flag. Evaluation compares the canonical Go duration string, so a value a
+// caller can never satisfy — a non-string, an unparseable spelling, or a
+// parseable but non-canonical one like 0m — is a declaration defect.
+func canonicalDurationValue(path string, set ruleSet, field string, value any) error {
+	s, ok := value.(string)
+	if !ok {
+		return UsageErrorf(
+			"command %q %s expression compares duration flag %q against %v; a duration comparison value is a Go duration string",
+			path, set.label, field, value,
+		)
+	}
+	d, err := time.ParseDuration(s)
+	if err != nil {
+		return UsageErrorf(
+			"command %q %s expression compares duration flag %q against %q: %v",
+			path, set.label, field, s, err,
+		)
+	}
+	if d.String() != s {
+		return UsageErrorf(
+			"command %q %s expression compares duration flag %q against %q; write the canonical spelling %q, the form rule evaluation compares",
+			path, set.label, field, s, d.String(),
 		)
 	}
 	return nil

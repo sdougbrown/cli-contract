@@ -109,7 +109,7 @@
         "input_rules": {
           "type": "array",
           "items": { "$ref": "#/definitions/rule" },
-          "description": "Umpire rules over this command's inputs: a rule with a field constrains one flag and is a violation only when that flag is supplied; a fieldless requires or enabledWhen rule constrains the invocation as a whole and must hold on every invocation."
+          "description": "Umpire rules over this command's inputs: a rule with a field constrains one flag and is a violation only when that flag is supplied; a fieldless requires or enabledWhen rule constrains the invocation as a whole and must hold on every invocation. A duration flag's value evaluates as its canonical Go duration string, so a consumer normalizes each duration input before evaluating rules."
         },
         "availability": {
           "type": "array",
@@ -144,7 +144,7 @@
       "properties": {
         "kind": {
           "enum": ["string", "bool", "repeat", "integer", "duration"],
-          "description": "The value kind. repeat collects repeated values; integer parses base-10; duration parses a Go duration string."
+          "description": "The value kind. repeat collects repeated values; integer parses base-10; duration parses a Go duration string and evaluates as its canonical Go duration string."
         },
         "short": {
           "type": "string",

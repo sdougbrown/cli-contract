@@ -406,21 +406,17 @@ func buildTool(opts Options, timeout string, appName string, path []string, cmd 
 			required = append(required, f.Name)
 		}
 		switch f.Kind {
-		case clicontract.Bool:
-			props[f.Name] = map[string]any{"type": "boolean"}
-			bindings = append(bindings, Binding{Property: f.Name, Style: "space", Flag: "--" + f.Name})
 		case clicontract.Repeat:
-			props[f.Name] = map[string]any{"type": "array", "items": map[string]any{"type": "string"}}
 			bindings = append(bindings, Binding{Property: f.Name, Style: "equals", Flag: "--" + f.Name})
 		default:
-			props[f.Name] = map[string]any{"type": "string"}
 			bindings = append(bindings, Binding{Property: f.Name, Style: "space", Flag: "--" + f.Name})
 		}
+		props[f.Name] = flagProperty(f.Kind)
 	}
 	for _, name := range opts.CommonFlags {
 		for _, f := range common {
 			if f.Name == name {
-				props[f.Name] = map[string]any{"type": schemaKind(f.Kind)}
+				props[f.Name] = flagProperty(f.Kind)
 				bindings = append(bindings, Binding{Property: f.Name, Style: "space", Flag: "--" + f.Name})
 				if f.Required {
 					required = append(required, f.Name)
@@ -587,17 +583,41 @@ func validateInputRuleSubjects(path string, rules []*clicontract.Rule, props map
 	return nil
 }
 
-// schemaKind names the JSON Schema type for one flag kind.
+// durationProperty is the inputSchema property for a duration flag: a
+// string holding a Go duration string. The format marker tells a consumer
+// to normalize the value to its canonical Go duration string before
+// evaluating input rules.
+func durationProperty() map[string]any {
+	return map[string]any{"type": "string", "format": "go-duration"}
+}
+
+// flagProperty is the one kind→property mapping for a manifest's
+// inputSchema, shared by command flags and common flags. A repeat property
+// carries its string items and a duration property the normalization
+// marker; the scalar kinds route through schemaKind.
+func flagProperty(k clicontract.Kind) map[string]any {
+	switch k {
+	case clicontract.Repeat:
+		return map[string]any{"type": "array", "items": map[string]any{"type": "string"}}
+	case clicontract.Duration:
+		return durationProperty()
+	default:
+		return map[string]any{"type": schemaKind(k)}
+	}
+}
+
+// schemaKind names the JSON Schema type for one scalar flag kind. The
+// array and duration kinds never reach it: flagProperty owns their
+// property shapes.
 func schemaKind(k clicontract.Kind) string {
 	switch k {
 	case clicontract.Bool:
 		return "boolean"
-	case clicontract.Repeat:
-		return "array"
 	case clicontract.Int:
 		return "integer"
 	default:
-		// Duration flags bind as their Go duration string.
+		// The scalar kinds (string, integer, boolean); array and duration
+		// kinds carry their own property shapes in flagProperty.
 		return "string"
 	}
 }
