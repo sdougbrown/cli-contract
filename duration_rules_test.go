@@ -3,6 +3,7 @@ package clicontract
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"maps"
 	"strings"
@@ -222,5 +223,52 @@ func TestDocumentFlagsCarryDurationKind(t *testing.T) {
 	}
 	if kinds["loop"] {
 		t.Errorf("--loop publishes as a duration; only duration flags carry the kind")
+	}
+}
+
+// TestDurationRuleValuesAreCanonical pins the declaration-side check: a
+// comparison value on a duration flag must be the canonical Go duration
+// string, because evaluation compares that form — a rule written `0m` can
+// never match the parser's canonical `0s`, and that is a declaration defect,
+// not a runtime surprise.
+func TestDurationRuleValuesAreCanonical(t *testing.T) {
+	expectDeclarationPanic := func(t *testing.T, app *App, want string) {
+		t.Helper()
+		defer func() {
+			r := recover()
+			if r == nil {
+				t.Fatalf("declaration accepted a rule the parser can never satisfy")
+			}
+			if msg := fmt.Sprint(r); !strings.Contains(msg, want) {
+				t.Errorf("error %q does not include %q", msg, want)
+			}
+		}()
+		app.Tree()
+	}
+
+	cases := []struct {
+		name  string
+		expr  *Expr
+		want  string
+		valid bool
+	}{
+		{"canonical eq", Eq("wait", "0s"), "", true},
+		{"canonical membership", In("wait", "0s", "1m30s"), "", true},
+		{"spelled zero", Eq("wait", "0m"), `write the canonical spelling "0s"`, false},
+		{"unparseable", Eq("wait", "soon"), `compares duration flag "wait" against "soon"`, false},
+		{"non-string", Eq("wait", 5), "a duration comparison value is a Go duration string", false},
+		{"non-canonical membership", NotIn("wait", "90s"), `write the canonical spelling "1m30s"`, false},
+		{"nested composite", And(Present("loop"), Eq("wait", "0m")), `write the canonical spelling "0s"`, false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			app := durationRulesApp()
+			app.Commands[0].InputRules = []*Rule{RequiresOn("wait", tc.expr, "reason")}
+			if tc.valid {
+				app.Tree()
+				return
+			}
+			expectDeclarationPanic(t, app, tc.want)
+		})
 	}
 }
