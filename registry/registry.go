@@ -406,19 +406,12 @@ func buildTool(opts Options, timeout string, appName string, path []string, cmd 
 			required = append(required, f.Name)
 		}
 		switch f.Kind {
-		case clicontract.Bool:
-			props[f.Name] = map[string]any{"type": "boolean"}
-			bindings = append(bindings, Binding{Property: f.Name, Style: "space", Flag: "--" + f.Name})
 		case clicontract.Repeat:
-			props[f.Name] = map[string]any{"type": "array", "items": map[string]any{"type": "string"}}
 			bindings = append(bindings, Binding{Property: f.Name, Style: "equals", Flag: "--" + f.Name})
-		case clicontract.Duration:
-			props[f.Name] = durationProperty()
-			bindings = append(bindings, Binding{Property: f.Name, Style: "space", Flag: "--" + f.Name})
 		default:
-			props[f.Name] = map[string]any{"type": "string"}
 			bindings = append(bindings, Binding{Property: f.Name, Style: "space", Flag: "--" + f.Name})
 		}
+		props[f.Name] = flagProperty(f.Kind)
 	}
 	for _, name := range opts.CommonFlags {
 		for _, f := range common {
@@ -598,14 +591,19 @@ func durationProperty() map[string]any {
 	return map[string]any{"type": "string", "format": "go-duration"}
 }
 
-// flagProperty renders one common flag's inputSchema property. Duration
-// flags carry the same normalization marker a command's own duration
-// flags carry.
+// flagProperty is the one kind→property mapping for a manifest's
+// inputSchema, shared by command flags and common flags. A repeat property
+// carries its string items and a duration property the normalization
+// marker; the scalar kinds route through schemaKind.
 func flagProperty(k clicontract.Kind) map[string]any {
-	if k == clicontract.Duration {
+	switch k {
+	case clicontract.Repeat:
+		return map[string]any{"type": "array", "items": map[string]any{"type": "string"}}
+	case clicontract.Duration:
 		return durationProperty()
+	default:
+		return map[string]any{"type": schemaKind(k)}
 	}
-	return map[string]any{"type": schemaKind(k)}
 }
 
 // schemaKind names the JSON Schema type for one flag kind.
@@ -618,8 +616,8 @@ func schemaKind(k clicontract.Kind) string {
 	case clicontract.Int:
 		return "integer"
 	default:
-		// String and integer flags bind as their declared values; a
-		// duration carries its own property shape (durationProperty).
+		// The scalar kinds (string, integer, boolean); array and duration
+		// kinds carry their own property shapes in flagProperty.
 		return "string"
 	}
 }

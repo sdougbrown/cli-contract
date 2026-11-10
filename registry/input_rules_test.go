@@ -497,3 +497,48 @@ func TestManifestMarksDurationInputs(t *testing.T) {
 		})
 	}
 }
+
+// TestManifestInputSchemaOneKindMapping pins the collapsed kind→property
+// mapping: a declared kind renders the same property shape whether the flag
+// belongs to the command or is a common flag, so the manifest cannot publish
+// two shapes for one kind.
+func TestManifestInputSchemaOneKindMapping(t *testing.T) {
+	app := &clicontract.App{
+		Name:      "testcli",
+		Version:   "vtest",
+		RootShort: "test cli",
+		CommonFlags: []clicontract.Flag{
+			{Name: "tag", Kind: clicontract.Repeat, Usage: "a common tag"},
+			{Name: "limit", Kind: clicontract.Int, Usage: "a common limit"},
+		},
+		Commands: []*clicontract.Command{{
+			Name:   "run",
+			Short:  "run a thing",
+			Handle: noopHandle,
+			Flags: []clicontract.Flag{
+				{Name: "count", Kind: clicontract.Int, Usage: "how many"},
+				{Name: "names", Kind: clicontract.Repeat, Usage: "some names"},
+				{Name: "force", Kind: clicontract.Bool, Usage: "force it"},
+				{Name: "wait", Kind: clicontract.Duration, Usage: "how long"},
+			},
+		}},
+	}
+	manifest, err := Manifest(app, Options{Binary: "testcli", CommonFlags: []string{"tag", "limit"}})
+	if err != nil {
+		t.Fatalf("manifest: %v", err)
+	}
+	props, _ := decodeTool(t, manifest, "testcli-run")
+	want := map[string]map[string]any{
+		"count": {"type": "integer"},
+		"names": {"type": "array", "items": map[string]any{"type": "string"}},
+		"force": {"type": "boolean"},
+		"wait":  {"type": "string", "format": "go-duration"},
+		"tag":   {"type": "array", "items": map[string]any{"type": "string"}},
+		"limit": {"type": "integer"},
+	}
+	for name, shape := range want {
+		if !reflect.DeepEqual(props[name], shape) {
+			t.Errorf("--%s property = %#v, want %#v", name, props[name], shape)
+		}
+	}
+}
