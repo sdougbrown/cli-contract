@@ -98,8 +98,8 @@ func TestDurationMSSchemaRendersAndRoundTrips(t *testing.T) {
 	if flag.Kind != "duration_ms" {
 		t.Errorf("published kind = %q, want \"duration_ms\"", flag.Kind)
 	}
-	if flag.Default != float64(2000) && flag.Default != int64(2000) && flag.Default != 2000 {
-		t.Errorf("published default = %#v, want 2000", flag.Default)
+	if flag.Default != int64(2000) {
+		t.Errorf("published default = %T %#v, want int64 2000", flag.Default, flag.Default)
 	}
 
 	data, err := json.Marshal(doc)
@@ -263,8 +263,8 @@ func TestDurationMSDeclarationDefaults(t *testing.T) {
 	if err != nil {
 		t.Fatalf("schema document: %v", err)
 	}
-	if doc.Commands["wait"].Flags["wait"].Default != float64(2000) && doc.Commands["wait"].Flags["wait"].Default != int64(2000) && doc.Commands["wait"].Flags["wait"].Default != 2000 {
-		t.Errorf("published default = %#v, want 2000", doc.Commands["wait"].Flags["wait"].Default)
+	if doc.Commands["wait"].Flags["wait"].Default != 2000 {
+		t.Errorf("published default = %T %#v, want int 2000", doc.Commands["wait"].Flags["wait"].Default, doc.Commands["wait"].Flags["wait"].Default)
 	}
 
 	// The in-memory path (no JSON round trip) rebuilds the default too:
@@ -291,7 +291,7 @@ func TestDurationMSDeclarationDefaults(t *testing.T) {
 		want string
 	}{
 		{"duration_ms string default", "2s", "a duration_ms default is a whole number of milliseconds"},
-		{"duration_ms fractional default", 1.0e13, "a duration_ms default is a whole number of milliseconds"},
+		{"duration_ms float64 default", 1.0e13, "a duration_ms default is a whole number of milliseconds"},
 		{"duration_ms out-of-range default", int64(1) << 62, "out-of-range default"},
 		{"duration_ms sub-millisecond default", 1500*time.Millisecond + time.Nanosecond, "a duration_ms default is a whole number of milliseconds"},
 	}
