@@ -606,13 +606,13 @@ func flagProperty(k clicontract.Kind) map[string]any {
 	}
 }
 
-// schemaKind names the JSON Schema type for one flag kind.
+// schemaKind names the JSON Schema type for one scalar flag kind. The
+// array and duration kinds never reach it: flagProperty owns their
+// property shapes.
 func schemaKind(k clicontract.Kind) string {
 	switch k {
 	case clicontract.Bool:
 		return "boolean"
-	case clicontract.Repeat:
-		return "array"
 	case clicontract.Int:
 		return "integer"
 	default:
