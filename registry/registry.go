@@ -412,6 +412,9 @@ func buildTool(opts Options, timeout string, appName string, path []string, cmd 
 		case clicontract.Repeat:
 			props[f.Name] = map[string]any{"type": "array", "items": map[string]any{"type": "string"}}
 			bindings = append(bindings, Binding{Property: f.Name, Style: "equals", Flag: "--" + f.Name})
+		case clicontract.Duration:
+			props[f.Name] = durationProperty()
+			bindings = append(bindings, Binding{Property: f.Name, Style: "space", Flag: "--" + f.Name})
 		default:
 			props[f.Name] = map[string]any{"type": "string"}
 			bindings = append(bindings, Binding{Property: f.Name, Style: "space", Flag: "--" + f.Name})
@@ -420,7 +423,7 @@ func buildTool(opts Options, timeout string, appName string, path []string, cmd 
 	for _, name := range opts.CommonFlags {
 		for _, f := range common {
 			if f.Name == name {
-				props[f.Name] = map[string]any{"type": schemaKind(f.Kind)}
+				props[f.Name] = flagProperty(f.Kind)
 				bindings = append(bindings, Binding{Property: f.Name, Style: "space", Flag: "--" + f.Name})
 				if f.Required {
 					required = append(required, f.Name)
@@ -587,6 +590,24 @@ func validateInputRuleSubjects(path string, rules []*clicontract.Rule, props map
 	return nil
 }
 
+// durationProperty is the inputSchema property for a duration flag: a
+// string holding a Go duration string. The format marker tells a consumer
+// to normalize the value to its canonical Go duration string before
+// evaluating input rules.
+func durationProperty() map[string]any {
+	return map[string]any{"type": "string", "format": "go-duration"}
+}
+
+// flagProperty renders one common flag's inputSchema property. Duration
+// flags carry the same normalization marker a command's own duration
+// flags carry.
+func flagProperty(k clicontract.Kind) map[string]any {
+	if k == clicontract.Duration {
+		return durationProperty()
+	}
+	return map[string]any{"type": schemaKind(k)}
+}
+
 // schemaKind names the JSON Schema type for one flag kind.
 func schemaKind(k clicontract.Kind) string {
 	switch k {
@@ -597,7 +618,8 @@ func schemaKind(k clicontract.Kind) string {
 	case clicontract.Int:
 		return "integer"
 	default:
-		// Duration flags bind as their Go duration string.
+		// String and integer flags bind as their declared values; a
+		// duration carries its own property shape (durationProperty).
 		return "string"
 	}
 }

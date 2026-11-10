@@ -100,6 +100,16 @@ that feeds `input_rules` to an Umpire engine compiles a fieldless gate rule
 onto a synthetic field reserved for the whole invocation, leaving `anyOf` and
 `eitherOf` wrappers without a field as rendered.
 
+Duration inputs evaluate as their canonical Go duration string: parse the
+value with Go's duration grammar and compare its Go `String()` rendering.
+The CLI applies this before rules run — `--wait=0m` and `--wait=0s` both
+evaluate as `0s`, `--wait=90s` as `1m30s` — so a consumer must normalize
+each input whose flag the document declares with kind `duration`, or that
+the manifest marks `format: "go-duration"`, the same way before evaluating
+rules. A rule's comparison value is already in that canonical form. An input
+no duration parser accepts is a parse fault the CLI rejects before rules run;
+it is invalid input, not a rule evaluation input.
+
 ## Validating a document
 
 Any JSON Schema draft-07 validator validates a document against

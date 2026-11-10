@@ -57,8 +57,10 @@ func (inv Invocation) suppliedValues(surface []Flag) map[string]any {
 			// carries a float64 rather than the parsed int.
 			values[f.Name] = float64(inv.Ints[f.Name])
 		case Duration:
-			// Duration flags bind as their Go duration string in every
-			// other surface, so rules compare against the same form.
+			// Duration rules compare the canonical Go duration string. The
+			// parser normalizes the caller's spelling (0m evaluates as 0s),
+			// and the spec makes a consumer normalize its input the same
+			// way before evaluating the emitted rules.
 			values[f.Name] = inv.Durations[f.Name].String()
 		default:
 			values[f.Name] = inv.Flags[f.Name]

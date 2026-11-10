@@ -427,3 +427,73 @@ func TestManifestRequiredCommonFlag(t *testing.T) {
 		t.Errorf("required = %v, want the required common flag listed", required)
 	}
 }
+
+// TestManifestMarksDurationInputs renders a duration flag into the tool's
+// input schema and checks the marker a consumer normalizes from: the
+// property is a string constrained by format go-duration, and the emitted
+// rules evaluate raw input spelled 0m exactly as the CLI classifies it once
+// the consumer applies that normalization.
+func TestManifestMarksDurationInputs(t *testing.T) {
+	app := &clicontract.App{
+		Name:      "testcli",
+		Version:   "vtest",
+		RootShort: "test cli",
+		CommonFlags: []clicontract.Flag{
+			{Name: "timeout", Kind: clicontract.Duration, Usage: "how long"},
+		},
+		Commands: []*clicontract.Command{{
+			Name:   "wait",
+			Short:  "wait for something",
+			Handle: noopHandle,
+			Flags: []clicontract.Flag{
+				{Name: "loop", Kind: clicontract.String, Usage: "loop target"},
+				{Name: "wait", Kind: clicontract.Duration, Usage: "how long"},
+			},
+			InputRules: []*clicontract.Rule{
+				clicontract.RequiresOn("wait", clicontract.Eq("wait", "0s"), "looping requires --wait=0s"),
+			},
+		}},
+	}
+	manifest, err := Manifest(app, Options{Binary: "testcli", CommonFlags: []string{"timeout"}})
+	if err != nil {
+		t.Fatalf("manifest: %v", err)
+	}
+	props, _ := decodeTool(t, manifest, "testcli-wait")
+	if want := map[string]any{"type": "string", "format": "go-duration"}; !reflect.DeepEqual(props["wait"], want) {
+		t.Errorf("--wait property = %#v, want %#v", props["wait"], want)
+	}
+	if want := map[string]any{"type": "string", "format": "go-duration"}; !reflect.DeepEqual(props["timeout"], want) {
+		t.Errorf("common --timeout property = %#v, want %#v", props["timeout"], want)
+	}
+	if want := map[string]any{"type": "string"}; !reflect.DeepEqual(props["loop"], want) {
+		t.Errorf("--loop property = %#v, want %#v: only duration flags carry the marker", props["loop"], want)
+	}
+
+	// The consumer path: compile the emitted rules, normalize the raw input
+	// per the marker, and require the CLI's verdicts.
+	engine := compileInputRules(t, manifest, "testcli-wait")
+	cases := []struct {
+		name   string
+		values map[string]any
+		legal  bool
+		reason string
+	}{
+		{"zero spelled 0m, normalized", map[string]any{"loop": "x", "wait": "0s"}, true, ""},
+		{"non-zero", map[string]any{"loop": "x", "wait": "1m0s"}, false, "looping requires --wait=0s"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			status, err := engine.Check(tc.values, nil, nil)
+			if err != nil {
+				t.Fatalf("evaluation: %v", err)
+			}
+			availability := status["wait"]
+			if availability.Enabled != tc.legal {
+				t.Errorf("enabled = %v (reason %q), want %v", availability.Enabled, availability.Reason, tc.legal)
+			}
+			if !tc.legal && availability.Reason != tc.reason {
+				t.Errorf("reason = %q, want %q", availability.Reason, tc.reason)
+			}
+		})
+	}
+}
