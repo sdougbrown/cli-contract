@@ -2,6 +2,7 @@ package clicontract
 
 import (
 	"fmt"
+	"math"
 	"strings"
 	"time"
 )
@@ -378,11 +379,11 @@ func exposableSurface(common, own []Flag) []Flag {
 // declaration site rather than in a generated manifest.
 func validateInputRules(path string, rules []*Rule, flags []Flag) error {
 	fields := make(map[string]bool, len(flags))
-	durations := make(map[string]bool, len(flags))
+	durations := make(map[string]Kind, len(flags))
 	for _, f := range flags {
 		fields[f.Name] = true
-		if f.Kind == Duration {
-			durations[f.Name] = true
+		if f.Kind == Duration || f.Kind == DurationMS {
+			durations[f.Name] = f.Kind
 		}
 	}
 	set := ruleSet{label: "input", fields: fields, durations: durations}
@@ -432,10 +433,10 @@ type ruleSet struct {
 	// availability set, whose explicit fields resolve against the tool set
 	// after the walk.
 	fields map[string]bool
-	// durations names the duration flags among fields, so a comparison
-	// value on one can be checked against the canonical form evaluation
-	// compares. Nil in the availability set, which has no flag kinds.
-	durations map[string]bool
+	// durations maps a duration flag's name to its kind, so a comparison
+	// value on one can be checked against the form evaluation compares.
+	// Nil in the availability set, which has no flag kinds.
+	durations map[string]Kind
 }
 
 // validateRule checks one rule against the set it was declared in, recursing
@@ -594,15 +595,15 @@ func validateExpr(path string, expr *Expr, set ruleSet) error {
 				"command %q %s expression references unknown flag %q", path, set.label, expr.Field,
 			)
 		}
-		if set.durations[expr.Field] {
+		if kind, ok := set.durations[expr.Field]; ok {
 			switch expr.Op {
 			case OpEq:
-				if err := canonicalDurationValue(path, set, expr.Field, expr.Value); err != nil {
+				if err := validateDurationValue(path, set, expr.Field, kind, expr.Value); err != nil {
 					return err
 				}
 			case OpIn, OpNotIn:
 				for _, value := range expr.Values {
-					if err := canonicalDurationValue(path, set, expr.Field, value); err != nil {
+					if err := validateDurationValue(path, set, expr.Field, kind, value); err != nil {
 						return err
 					}
 				}
@@ -632,7 +633,19 @@ func validateExpr(path string, expr *Expr, set ruleSet) error {
 	return nil
 }
 
-// canonicalDurationValue checks one comparison value against a duration
+// validateDurationValue checks one comparison value against a duration flag
+// of the given kind. Evaluation compares a fixed form per kind, so a value
+// outside that form is a declaration defect no invocation can satisfy.
+func validateDurationValue(path string, set ruleSet, field string, kind Kind, value any) error {
+	switch kind {
+	case DurationMS:
+		return durationMSValue(path, set, field, value)
+	default: // Duration
+		return canonicalDurationValue(path, set, field, value)
+	}
+}
+
+// canonicalDurationValue checks one comparison value against a Go-duration
 // flag. Evaluation compares the canonical Go duration string, so a value a
 // caller can never satisfy — a non-string, an unparseable spelling, or a
 // parseable but non-canonical one like 0m — is a declaration defect.
@@ -658,6 +671,35 @@ func canonicalDurationValue(path string, set ruleSet, field string, value any) e
 		)
 	}
 	return nil
+}
+
+// durationMSValue checks one comparison value against a duration_ms flag:
+// evaluation compares whole-number milliseconds, so a non-number or a
+// fraction is a declaration defect no invocation can satisfy.
+func durationMSValue(path string, set ruleSet, field string, value any) error {
+	// A rule value past the milliseconds bound can never match: the
+	// parser rejects the input that would bind there (tree.go's parse
+	// path enforces maxDurationMS).
+	outOfRange := "a duration_ms comparison value is a whole number of milliseconds within ±%d"
+	switch n := value.(type) {
+	case int:
+		if int64(n) > maxDurationMS || int64(n) < -maxDurationMS {
+			return UsageErrorf("command %q %s expression compares duration flag %q against %v; "+outOfRange, path, set.label, field, value, maxDurationMS)
+		}
+		return nil
+	case int64:
+		if n > maxDurationMS || n < -maxDurationMS {
+			return UsageErrorf("command %q %s expression compares duration flag %q against %v; "+outOfRange, path, set.label, field, value, maxDurationMS)
+		}
+		return nil
+	case float64:
+		if n != math.Trunc(n) || n > float64(maxDurationMS) || n < -float64(maxDurationMS) {
+			return UsageErrorf("command %q %s expression compares duration flag %q against %v; "+outOfRange, path, set.label, field, value, maxDurationMS)
+		}
+		return nil
+	default:
+		return UsageErrorf("command %q %s expression compares duration flag %q against %v; a duration_ms comparison value is a whole number of milliseconds", path, set.label, field, value)
+	}
 }
 
 // validateSameField enforces the composite contract all operands target the

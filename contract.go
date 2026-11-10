@@ -15,6 +15,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"math"
 	"strings"
 	"time"
 
@@ -38,7 +39,19 @@ const (
 	// normalizes (0m evaluates as 0s), so a rule value is written in
 	// that form.
 	Duration
+	// DurationMS is a time.Duration flag whose value spells whole-number
+	// milliseconds on the command line, in the schema document, and in
+	// the rules: --wait 1500 is 1.5s. Rules compare JSON numbers, and a
+	// consumer needs no normalization to evaluate them — the reason to
+	// prefer this kind when non-Go tools read the contract. The handler
+	// binds a time.Duration either way.
+	DurationMS
 )
+
+// maxDurationMS bounds a duration_ms value: the milliseconds-to-Duration
+// product wraps past it, so the declaration, the parser, and the rule-value
+// validation all enforce this one bound.
+const maxDurationMS = math.MaxInt64 / int64(time.Millisecond)
 
 // Flag declares one flag of one command. Usage is rendered in help and in
 // the schema document; the same declaration feeds both surfaces.
@@ -445,10 +458,10 @@ func (c *Command) ValidateOutput(path string) error {
 }
 
 // validateFlags checks one flag list the tree builder registers: named, known
-// kind, a usage string, and a one-letter shorthand cobra can register without
-// claiming the help flag's. It returns the surface its command parses: the
-// inherited flags the list does not shadow, then the list's own, in
-// registration order.
+// kind, a default that matches its kind, a usage string, and a one-letter
+// shorthand cobra can register without claiming the help flag's. It returns
+// the surface its command parses: the inherited flags the list does not
+// shadow, then the list's own, in registration order.
 //
 // pflag panics at registration on a repeated name or a shared shorthand, so
 // both are caller errors here. A flag named "help" anywhere in the surface
@@ -461,9 +474,12 @@ func validateFlags(where string, inherited []surfaceFlag, flags []Flag, commonNa
 	names := make(map[string]bool, len(flags))
 	for _, f := range flags {
 		switch f.Kind {
-		case String, Bool, Repeat, Int, Duration:
+		case String, Bool, Repeat, Int, Duration, DurationMS:
 		default:
 			return nil, UsageErrorf("%s flag %q has unknown kind %d", where, f.Name, f.Kind)
+		}
+		if err := validateFlagDefault(where, f); err != nil {
+			return nil, err
 		}
 		if f.Usage == "" {
 			return nil, UsageErrorf("%s flag %q has no usage string", where, f.Name)
@@ -516,6 +532,40 @@ func validateFlags(where string, inherited []surfaceFlag, flags []Flag, commonNa
 		surface = append(surface, surfaceFlag{Flag: f, declaredBy: where})
 	}
 	return surface, nil
+}
+
+// validateFlagDefault checks one flag's declared default against its kind.
+// The published document renders the default the parser applies, so a
+// default the parser would silently ignore is a divergence between the
+// contract and the runtime: it fails here, at the declaration site.
+func validateFlagDefault(where string, f Flag) error {
+	switch f.Kind {
+	case Duration:
+		if f.Default != nil {
+			if _, ok := f.Default.(time.Duration); !ok {
+				return UsageErrorf("%s flag %q has a %T default; a duration default is a time.Duration", where, f.Name, f.Default)
+			}
+		}
+	case DurationMS:
+		switch v := f.Default.(type) {
+		case nil:
+		case int:
+			if int64(v) > maxDurationMS || int64(v) < -maxDurationMS {
+				return UsageErrorf("%s flag %q has an out-of-range default: the largest duration_ms value is %d milliseconds", where, f.Name, maxDurationMS)
+			}
+		case int64:
+			if v > maxDurationMS || v < -maxDurationMS {
+				return UsageErrorf("%s flag %q has an out-of-range default: the largest duration_ms value is %d milliseconds", where, f.Name, maxDurationMS)
+			}
+		case time.Duration:
+			if v%time.Millisecond != 0 {
+				return UsageErrorf("%s flag %q has a %v default; a duration_ms default is a whole number of milliseconds", where, f.Name, v)
+			}
+		default:
+			return UsageErrorf("%s flag %q has a %T default; a duration_ms default is a whole number of milliseconds", where, f.Name, f.Default)
+		}
+	}
+	return nil
 }
 
 // commandUse is the cobra Use string for one command: the name plus the

@@ -593,7 +593,7 @@ func durationProperty() map[string]any {
 
 // flagProperty is the one kind→property mapping for a manifest's
 // inputSchema, shared by command flags and common flags. A repeat property
-// carries its string items and a duration property the normalization
+// carries its string items and a duration property its normalization
 // marker; the scalar kinds route through schemaKind.
 func flagProperty(k clicontract.Kind) map[string]any {
 	switch k {
@@ -601,6 +601,8 @@ func flagProperty(k clicontract.Kind) map[string]any {
 		return map[string]any{"type": "array", "items": map[string]any{"type": "string"}}
 	case clicontract.Duration:
 		return durationProperty()
+	case clicontract.DurationMS:
+		return map[string]any{"type": "integer", "format": "duration-ms"}
 	default:
 		return map[string]any{"type": schemaKind(k)}
 	}
@@ -616,8 +618,8 @@ func schemaKind(k clicontract.Kind) string {
 	case clicontract.Int:
 		return "integer"
 	default:
-		// The scalar kinds (string, integer, boolean); array and duration
-		// kinds carry their own property shapes in flagProperty.
+		// The scalar kinds (string, integer, boolean); the array and
+		// duration kinds carry their own property shapes in flagProperty.
 		return "string"
 	}
 }

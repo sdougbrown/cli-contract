@@ -210,7 +210,7 @@ entries, the common flags, the availability conditions, and the signal
 convention the library owns. The shape is specified in [spec/](spec/).
 `CommandSchema` and `FlagSchema` carry names, help text, structured
 positionals, Use strings, URL positionals, single-dash behavior, flag kinds
-(`string`/`bool`/`repeat`/`integer`/`duration`), usage strings, defaults,
+(`string`/`bool`/`repeat`/`integer`/`duration`/`duration_ms`), usage strings, defaults,
 declared shorthands (`short`, omitted when a flag has none), input and
 availability rules, and the output declaration. Compose the app's own facts
 (statuses, error codes, envelope fields, named exit codes) around it before
@@ -367,6 +367,14 @@ the emitted rules applies the same normalization — the schema document's
 `kind: "duration"` flag and the manifest's `format: "go-duration"` property
 mark the inputs to normalize — and the [spec](spec/README.md) pins this so
 the two sides cannot disagree on equivalent spellings.
+
+
+A flag whose consumers are not Go tools can declare `duration_ms` instead:
+the caller spells whole-number milliseconds (`--wait 1500`), the document
+and the manifest publish a JSON number, and the rules compare numbers —
+there is no spelling to normalize, so a consumer evaluates them as they
+arrive. The handler binds a `time.Duration` either way. Rule values on a
+`duration_ms` flag are whole numbers of milliseconds, checked at declaration.
 
 The rules validate with the rest of the surface and render into the command's
 schema entry as `input_rules`, beside `flags`, and into the [registry](registry/registry.go)

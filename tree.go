@@ -198,6 +198,25 @@ func addFlags(fs *pflag.FlagSet, flags []Flag) {
 			} else {
 				fs.Duration(f.Name, def, f.Usage)
 			}
+		case DurationMS:
+			// pflag has no milliseconds type: an Int64 flag carries the
+			// spelling the kind publishes, and invocationFrom converts to
+			// the time.Duration the handler binds. The default accepts the
+			// kind's natural spellings; validateFlags rejects the others.
+			var def int64
+			switch v := f.Default.(type) {
+			case time.Duration:
+				def = v.Milliseconds()
+			case int:
+				def = int64(v)
+			case int64:
+				def = v
+			}
+			if f.Short != "" {
+				fs.Int64P(f.Name, f.Short, def, f.Usage)
+			} else {
+				fs.Int64(f.Name, def, f.Usage)
+			}
 		default: // String
 			def := ""
 			if v, ok := f.Default.(string); ok {
@@ -284,6 +303,17 @@ func invocationFrom(cmd *cobra.Command, c *Command, ancestors []*Command, args [
 				return err
 			}
 			inv.Durations[f.Name] = d
+		case DurationMS:
+			n, err := fs.GetInt64(f.Name)
+			if err != nil {
+				return err
+			}
+			// The multiplication overflows past the same bound the
+			// declaration paths enforce, so the parser rejects it here.
+			if n > maxDurationMS || n < -maxDurationMS {
+				return UsageErrorf("flag --%s is out of range: the largest duration_ms value is %d milliseconds", f.Name, maxDurationMS)
+			}
+			inv.Durations[f.Name] = time.Duration(n) * time.Millisecond
 		default:
 			s, err := fs.GetString(f.Name)
 			if err != nil {

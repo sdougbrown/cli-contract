@@ -62,6 +62,11 @@ func (inv Invocation) suppliedValues(surface []Flag) map[string]any {
 			// and the spec makes a consumer normalize its input the same
 			// way before evaluating the emitted rules.
 			values[f.Name] = inv.Durations[f.Name].String()
+		case DurationMS:
+			// Rules compare whole-number milliseconds: the value the
+			// caller supplied is already the value a consumer evaluates,
+			// so no normalization statement exists for this kind.
+			values[f.Name] = float64(inv.Durations[f.Name].Milliseconds())
 		default:
 			values[f.Name] = inv.Flags[f.Name]
 		}

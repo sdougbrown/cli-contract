@@ -233,6 +233,34 @@ func flagFromSchema(name string, s FlagSchema) (Flag, error) {
 		default:
 			return Flag{}, fmt.Errorf("duration default %v is not a duration string", s.Default)
 		}
+	case DurationMS:
+		// A milliseconds value multiplies by 1e6 to become a Duration, so
+		// past maxDurationMS the product wraps, and a wrapped default
+		// renders and applies as garbage.
+		switch number := s.Default.(type) {
+		case time.Duration:
+			f.Default = number
+		case int:
+			if int64(number) > maxDurationMS || int64(number) < -maxDurationMS {
+				return Flag{}, fmt.Errorf("duration_ms default %v is out of range", number)
+			}
+			f.Default = time.Duration(number) * time.Millisecond
+		case int64:
+			if number > maxDurationMS || number < -maxDurationMS {
+				return Flag{}, fmt.Errorf("duration_ms default %v is out of range", number)
+			}
+			f.Default = time.Duration(number) * time.Millisecond
+		case float64:
+			if number != math.Trunc(number) {
+				return Flag{}, fmt.Errorf("duration_ms default %v is not a whole number of milliseconds", number)
+			}
+			if number > float64(maxDurationMS) || number < -float64(maxDurationMS) {
+				return Flag{}, fmt.Errorf("duration_ms default %v is out of range", number)
+			}
+			f.Default = time.Duration(number) * time.Millisecond
+		default:
+			return Flag{}, fmt.Errorf("duration_ms default %v is not a whole number of milliseconds", s.Default)
+		}
 	case Bool:
 		value, ok := s.Default.(bool)
 		if !ok {
@@ -278,6 +306,7 @@ var kindNames = []struct {
 	{Repeat, "repeat"},
 	{Int, "integer"},
 	{Duration, "duration"},
+	{DurationMS, "duration_ms"},
 }
 
 // kindFromSchema maps a rendered kind name back to the declaration's kind.
