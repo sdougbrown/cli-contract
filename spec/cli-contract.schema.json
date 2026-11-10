@@ -143,7 +143,7 @@
       "additionalProperties": false,
       "properties": {
         "kind": {
-          "enum": ["string", "bool", "repeat", "integer", "duration"],
+          "enum": ["string", "bool", "repeat", "integer", "duration", "duration_ms"],
           "description": "The value kind. repeat collects repeated values; integer parses base-10; duration parses a Go duration string and evaluates as its canonical Go duration string."
         },
         "short": {

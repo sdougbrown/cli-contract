@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"maps"
+	"math"
 	"strings"
 	"testing"
 	"time"
@@ -239,4 +240,77 @@ func TestConsumerEvaluatesDurationMSRuleLikeTheParser(t *testing.T) {
 			}
 		})
 	}
+}
+
+// TestDurationMSDocumentSatisfiesTheSpec runs the rendered document through
+// the published JSON Schema — the check that keeps the kind's vocabulary
+// from drifting between the renderer and the spec.
+func TestDurationMSDocumentSatisfiesTheSpec(t *testing.T) {
+	doc, err := durationMSApp().SchemaDocument()
+	if err != nil {
+		t.Fatalf("schema document: %v", err)
+	}
+	if err := validateDocument(t, doc); err != nil {
+		t.Errorf("rendered duration_ms document fails the published schema: %v", err)
+	}
+}
+
+// TestDurationMSBounds pin the overflow bound: a milliseconds value past
+// MaxInt64 nanoseconds cannot become a time.Duration, so the declaration and
+// the parser reject it rather than wrap.
+func TestDurationMSBounds(t *testing.T) {
+	const maxMS = int64(math.MaxInt64) / int64(time.Millisecond)
+
+	// A default past the bound fails the rebuild.
+	app := durationMSApp()
+	app.Commands[0].Flags[0].Default = time.Duration(maxMS) * time.Millisecond / 2 // in range
+	if _, err := app.SchemaDocument(); err != nil {
+		t.Fatalf("in-range default: %v", err)
+	}
+	huge := 1.0e13 // past MaxInt64/1e6 ≈ 9.2e12
+	bad := durationMSApp()
+	bad.Commands[0].Flags[0].Default = huge
+	data, err := bad.SchemaDocument()
+	if err != nil {
+		t.Fatalf("schema document: %v", err)
+	}
+	parsed, err := ParseSchemaDocument(mustJSON(t, data))
+	if err != nil {
+		t.Fatalf("parse schema document: %v", err)
+	}
+	handlers := map[string]HandleFunc{"wait": func(ctx context.Context, inv Invocation, stderr io.Writer) (any, error) {
+		return map[string]any{"status": "ok"}, nil
+	}}
+	if _, err := parsed.App(handlers); err == nil || !strings.Contains(err.Error(), "out of range") {
+		t.Errorf("rebuild with a %v ms default: %v, want out of range", huge, err)
+	}
+
+	// A parsed value past the bound is a caller error, not a wrapped duration.
+	adapter := &testAdapter{}
+	if code, stdout, _ := runApp(t, durationMSApp(), adapter, "wait", "--wait", "10000000000000"); code != 2 || !strings.Contains(stdout, "out of range") {
+		t.Errorf("exit = %d stdout = %q, want an out-of-range usage error", code, stdout)
+	}
+
+	// A rule value past the bound is a declaration defect.
+	defer func() {
+		r := recover()
+		if r == nil {
+			t.Fatal("declaration accepted a rule value the parser can never bind")
+		}
+		if msg := fmt.Sprint(r); !strings.Contains(msg, "within") {
+			t.Errorf("error %q does not name the bound", msg)
+		}
+	}()
+	unsatisfiable := durationMSApp()
+	unsatisfiable.Commands[0].InputRules = []*Rule{RequiresOn("wait", Eq("wait", 1.0e13), "reason")}
+	unsatisfiable.Tree()
+}
+
+func mustJSON(t *testing.T, v any) []byte {
+	t.Helper()
+	data, err := json.Marshal(v)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	return data
 }

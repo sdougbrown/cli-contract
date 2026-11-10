@@ -234,18 +234,29 @@ func flagFromSchema(name string, s FlagSchema) (Flag, error) {
 			return Flag{}, fmt.Errorf("duration default %v is not a duration string", s.Default)
 		}
 	case DurationMS:
+		// A milliseconds value multiplies by 1e6 to become a Duration, so
+		// the bound is the int64 range divided by the unit: past it the
+		// product wraps, and a wrapped default renders and applies as
+		// garbage.
+		const maxMS = math.MaxInt64 / int64(time.Millisecond)
 		switch number := s.Default.(type) {
 		case time.Duration:
 			f.Default = number
 		case int:
+			if int64(number) > maxMS || int64(number) < -maxMS {
+				return Flag{}, fmt.Errorf("duration_ms default %v is out of range", number)
+			}
 			f.Default = time.Duration(number) * time.Millisecond
 		case int64:
+			if number > maxMS || number < -maxMS {
+				return Flag{}, fmt.Errorf("duration_ms default %v is out of range", number)
+			}
 			f.Default = time.Duration(number) * time.Millisecond
 		case float64:
 			if number != math.Trunc(number) {
 				return Flag{}, fmt.Errorf("duration_ms default %v is not a whole number of milliseconds", number)
 			}
-			if number > math.MaxInt64 || number < math.MinInt64 {
+			if number > float64(maxMS) || number < -float64(maxMS) {
 				return Flag{}, fmt.Errorf("duration_ms default %v is out of range", number)
 			}
 			f.Default = time.Duration(number) * time.Millisecond

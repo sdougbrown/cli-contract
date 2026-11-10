@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math"
 	"os"
 	"slices"
 	"strings"
@@ -301,6 +302,12 @@ func invocationFrom(cmd *cobra.Command, c *Command, ancestors []*Command, args [
 			n, err := fs.GetInt64(f.Name)
 			if err != nil {
 				return err
+			}
+			// The multiplication overflows past the same bound the
+			// declaration paths enforce, so the parser rejects it here.
+			const maxMS = math.MaxInt64 / int64(time.Millisecond)
+			if n > maxMS || n < -maxMS {
+				return UsageErrorf("flag --%s is out of range: the largest duration_ms value is %d milliseconds", f.Name, maxMS)
 			}
 			inv.Durations[f.Name] = time.Duration(n) * time.Millisecond
 		default:
