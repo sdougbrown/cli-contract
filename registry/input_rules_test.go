@@ -542,3 +542,31 @@ func TestManifestInputSchemaOneKindMapping(t *testing.T) {
 		}
 	}
 }
+
+// TestManifestMarksDurationMSInputs pins the duration_ms surface: the
+// property is an integer carrying the unit marker, so a consumer knows the
+// value is whole milliseconds without reading the usage string.
+func TestManifestMarksDurationMSInputs(t *testing.T) {
+	app := &clicontract.App{
+		Name:      "testcli",
+		Version:   "vtest",
+		RootShort: "test cli",
+		Commands: []*clicontract.Command{{
+			Name:   "wait",
+			Short:  "wait for something",
+			Handle: noopHandle,
+			Flags: []clicontract.Flag{
+				{Name: "wait", Kind: clicontract.DurationMS, Usage: "how long, in milliseconds"},
+			},
+		}},
+	}
+	manifest, err := Manifest(app, Options{Binary: "testcli"})
+	if err != nil {
+		t.Fatalf("manifest: %v", err)
+	}
+	props, _ := decodeTool(t, manifest, "testcli-wait")
+	want := map[string]any{"type": "integer", "format": "duration-ms"}
+	if !reflect.DeepEqual(props["wait"], want) {
+		t.Errorf("--wait property = %#v, want %#v", props["wait"], want)
+	}
+}

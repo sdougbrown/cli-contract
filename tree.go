@@ -198,6 +198,19 @@ func addFlags(fs *pflag.FlagSet, flags []Flag) {
 			} else {
 				fs.Duration(f.Name, def, f.Usage)
 			}
+		case DurationMS:
+			// pflag has no milliseconds type: an Int64 flag carries the
+			// spelling the kind publishes, and invocationFrom converts to
+			// the time.Duration the handler binds.
+			def := int64(0)
+			if v, ok := f.Default.(time.Duration); ok {
+				def = v.Milliseconds()
+			}
+			if f.Short != "" {
+				fs.Int64P(f.Name, f.Short, def, f.Usage)
+			} else {
+				fs.Int64(f.Name, def, f.Usage)
+			}
 		default: // String
 			def := ""
 			if v, ok := f.Default.(string); ok {
@@ -284,6 +297,12 @@ func invocationFrom(cmd *cobra.Command, c *Command, ancestors []*Command, args [
 				return err
 			}
 			inv.Durations[f.Name] = d
+		case DurationMS:
+			n, err := fs.GetInt64(f.Name)
+			if err != nil {
+				return err
+			}
+			inv.Durations[f.Name] = time.Duration(n) * time.Millisecond
 		default:
 			s, err := fs.GetString(f.Name)
 			if err != nil {

@@ -64,11 +64,15 @@ func (k Kind) KindSchema() string {
 }
 
 // defaultOf is the flag's default: the declared Default when set, the
-// flag's zero value otherwise. A duration renders as its Go duration string so
-// a language-neutral document never carries Go's nanosecond count.
+// flag's zero value otherwise. A duration renders as its Go duration string
+// and a duration_ms as whole-number milliseconds, so a language-neutral
+// document never carries Go's nanosecond count.
 func defaultOf(f Flag) any {
 	if f.Default != nil {
 		if d, ok := f.Default.(time.Duration); ok {
+			if f.Kind == DurationMS {
+				return d.Milliseconds()
+			}
 			return d.String()
 		}
 		return f.Default
@@ -82,6 +86,8 @@ func defaultOf(f Flag) any {
 		return 0
 	case Duration:
 		return time.Duration(0).String()
+	case DurationMS:
+		return int64(0)
 	default:
 		return ""
 	}

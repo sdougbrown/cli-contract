@@ -38,6 +38,13 @@ const (
 	// normalizes (0m evaluates as 0s), so a rule value is written in
 	// that form.
 	Duration
+	// DurationMS is a time.Duration flag whose value spells whole-number
+	// milliseconds on the command line, in the schema document, and in
+	// the rules: --wait 1500 is 1.5s. Rules compare JSON numbers, and a
+	// consumer needs no normalization to evaluate them — the reason to
+	// prefer this kind when non-Go tools read the contract. The handler
+	// binds a time.Duration either way.
+	DurationMS
 )
 
 // Flag declares one flag of one command. Usage is rendered in help and in
@@ -461,7 +468,7 @@ func validateFlags(where string, inherited []surfaceFlag, flags []Flag, commonNa
 	names := make(map[string]bool, len(flags))
 	for _, f := range flags {
 		switch f.Kind {
-		case String, Bool, Repeat, Int, Duration:
+		case String, Bool, Repeat, Int, Duration, DurationMS:
 		default:
 			return nil, UsageErrorf("%s flag %q has unknown kind %d", where, f.Name, f.Kind)
 		}

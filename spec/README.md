@@ -110,6 +110,14 @@ rules. A rule's comparison value is already in that canonical form. An input
 no duration parser accepts is a parse fault the CLI rejects before rules run;
 it is invalid input, not a rule evaluation input.
 
+A flag with kind `duration_ms` binds whole-number milliseconds instead: the
+caller spells a base-10 integer (`--wait 1500` is 1.5s), the document's
+default carries a whole number, the manifest marks the property
+`format: "duration-ms"`, and a rule's comparison value is a whole number of
+milliseconds. There is no spelling to normalize: the value a consumer
+receives is the value rule evaluation compares. The declaration rejects a
+comparison value that is not a whole number of milliseconds at startup.
+
 ## Validating a document
 
 Any JSON Schema draft-07 validator validates a document against

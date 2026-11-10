@@ -155,7 +155,7 @@
         "usage": { "type": "string" },
         "default": {
           "type": ["string", "number", "boolean", "array"],
-          "description": "The value applied when the flag is absent. An integer carries a whole number, a duration its Go duration string, and a repeat an array of strings."
+          "description": "The value applied when the flag is absent. An integer carries a whole number, a duration its Go duration string, a duration_ms a whole number of milliseconds, and a repeat an array of strings."
         },
         "required": {
           "type": "boolean",
@@ -167,7 +167,8 @@
         { "if": { "properties": { "kind": { "const": "bool" } } }, "then": { "properties": { "default": { "type": "boolean" } } } },
         { "if": { "properties": { "kind": { "const": "repeat" } } }, "then": { "properties": { "default": { "type": "array", "items": { "type": "string" } } } } },
         { "if": { "properties": { "kind": { "const": "integer" } } }, "then": { "properties": { "default": { "type": "number", "multipleOf": 1 } } } },
-        { "if": { "properties": { "kind": { "const": "duration" } } }, "then": { "properties": { "default": { "type": "string" } } } }
+        { "if": { "properties": { "kind": { "const": "duration" } } }, "then": { "properties": { "default": { "type": "string" } } } },
+        { "if": { "properties": { "kind": { "const": "duration_ms" } } }, "then": { "properties": { "default": { "type": "number", "multipleOf": 1 } } } }
       ]
     },
     "output": {
