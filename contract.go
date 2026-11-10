@@ -487,6 +487,9 @@ func validateFlagDefault(where string, f Flag) error {
 				return UsageErrorf("%s flag %q has an out-of-range default: the largest duration_ms value is %d milliseconds", where, f.Name, maxDurationMS)
 			}
 		case time.Duration:
+			if v%time.Millisecond != 0 {
+				return UsageErrorf("%s flag %q has a %v default; a duration_ms default is a whole number of milliseconds", where, f.Name, v)
+			}
 		default:
 			return UsageErrorf("%s flag %q has a %T default; a duration_ms default is a whole number of milliseconds", where, f.Name, f.Default)
 		}

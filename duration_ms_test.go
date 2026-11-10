@@ -161,6 +161,7 @@ func TestDurationMSRuleValuesAreNumbers(t *testing.T) {
 		{"fractional value", Eq("wait", 1.5), "a whole number of milliseconds", false},
 		{"fractional membership", NotIn("wait", 1.5), "a whole number of milliseconds", false},
 		{"nested composite", And(Present("wait"), Eq("wait", "1.5s")), "a duration_ms comparison value", false},
+		{"int64 out of range", Eq("wait", int64(1)<<62), "within", false},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -292,6 +293,7 @@ func TestDurationMSDeclarationDefaults(t *testing.T) {
 		{"duration_ms string default", "2s", "a duration_ms default is a whole number of milliseconds"},
 		{"duration_ms fractional default", 1.0e13, "a duration_ms default is a whole number of milliseconds"},
 		{"duration_ms out-of-range default", int64(1) << 62, "out-of-range default"},
+		{"duration_ms sub-millisecond default", 1500*time.Millisecond + time.Nanosecond, "a duration_ms default is a whole number of milliseconds"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
